@@ -1,0 +1,8 @@
+# dsh-dark-gril-theme 的 bundle patch 层。
+#
+# `name` 必须与安装的包名一致，否则 loader 只 warn 然后跳过这一行，
+# 表现是「插件没生效但不报错」。
+# `config` 在 patch 层是整行替换而不是深合并，所以这里不写 config。
+- insert:
+    - id: dsh-dark-gril-theme
+      name: dsh-dark-gril-theme

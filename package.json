@@ -1,0 +1,28 @@
+{
+  "name": "dsh-dark-gril-theme",
+  "version": "0.1.0-s1",
+  "private": true,
+  "description": "按 DSH 会话状态切换的背景视频（阶段一：固定 idle 视频 + 主题材质，前两栏播放、右侧工作台自建磨砂玻璃）。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "runtime",
+    "assets",
+    "cordis.patch.yml"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "UNLICENSED",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

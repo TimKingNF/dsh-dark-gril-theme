@@ -1,0 +1,13 @@
+# 依赖与临时产物
+node_modules/
+.tmp*/
+*.log
+.DS_Store
+
+# 视频素材不入库：127MB 的原始素材跟着 Downloads 走，仓库只留取用约定
+assets/*.webm
+assets/*.mp4
+
+# 解包参考、一次性调试产物
+.tmp-ref/
+_scratch/

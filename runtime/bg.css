@@ -1,0 +1,183 @@
+/*
+ * dsh-state-video-bg —— 页面侧样式（阶段一）。
+ *
+ * 三层从后到前：
+ *   #svb-stage (z-index:-2)  视频，只铺前两栏，前两栏各压一层暗蒙版
+ *   #svb-glass (z-index:-1)  接缝收边 + 右侧整块玻璃 + 跨栏光源
+ *   #root 内的应用内容       原样在上
+ *
+ * 因为两层都用负 z-index，应用内容（含 body 上的 portal）永远在上面，
+ * 不需要给 DSH 任何元素加 z-index，也不会挡住交互。
+ *
+ * 右区几何（宽度全部由 bg.js 的 applyLayout() 写入，样式里不认"第几栏"）：
+ *   videoRight = 侧栏 + 对话区的右缘
+ *   #svb-seam   [videoRight-220, videoRight)   收边带，整条压在视频上，不进右栏
+ *   #svb-sheet  [videoRight, 窗口右缘]          不透明玻璃
+ *   #svb-glow   [videoRight-200, 窗口右缘]      一盏灯，跨过接缝
+ */
+
+/* 画布底色必须让开：主题把不透明底色画在 html/body 和 --dsw-alias-bg-base 上，
+   不让开的话视频永远被盖住。 */
+html[data-svb='on'],
+html[data-svb='on'] body {
+  background-color: transparent !important;
+}
+
+html[data-svb='on'] body {
+  --dsw-alias-bg-base: transparent !important;
+  --dsw-specific-sidebar-fill: transparent !important;
+}
+
+/* 右区玻璃的竖向色阶：参考条带实测取色，不要凭感觉改。
+   只留这一个变量——收边带必须和玻璃逐像素同色，否则接缝处又会出一条带子。 */
+:root {
+  --svb-sheet-ramp: linear-gradient(
+    180deg,
+    rgb(13, 10, 12) 0%,
+    rgb(14, 11, 11) 40%,
+    rgb(21, 15, 12) 64%,
+    rgb(32, 21, 14) 83%,
+    rgb(47, 30, 17) 100%
+  );
+}
+
+#svb-stage {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  overflow: hidden;
+  pointer-events: none;
+  /* 素材不放大，窗口比 1392 行高时上下会露一点底色；
+     用视频自身的暗部颜色垫住，露出来也看不出是"没铺满"。 */
+  background: rgb(11, 9, 10);
+}
+
+#svb-glass {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+#svb-video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+  /* 人物偏右：焦点由 JS 按配置写入 */
+  object-position: var(--svb-focus, 78% 40%);
+  opacity: 0;
+  transition: opacity 700ms ease;
+  background: transparent;
+}
+
+#svb-video[data-shown='1'] {
+  opacity: 1;
+}
+
+/* 玻璃层的四块：DOM 顺序即叠放顺序（scrim-side → scrim-conv → sheet → seam → glow），
+   左/宽在运行时写入，初始 0 宽所以页面不会先闪一块。 */
+#svb-scrim-side,
+#svb-scrim-conv,
+#svb-seam,
+#svb-sheet,
+#svb-glow {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+}
+
+/* 前两栏的压暗蒙版：视频动态范围太大，不压的话正文会飘。 */
+#svb-scrim-side {
+  background-color: rgba(12, 10, 9, var(--svb-side-dim, 0.48));
+}
+
+#svb-scrim-conv {
+  background-color: rgba(12, 10, 9, var(--svb-conv-dim, 0.54));
+}
+
+/* 右侧工作台：一块不透明玻璃，从 videoRight 一直铺到窗口右缘。
+   第三栏、第四栏、第五栏、第六栏共用这一块——栏数变了宽度自动跟着变，
+   所以这里没有 border、没有分隔线，也没有任何按栏写死的样式。 */
+#svb-sheet {
+  background-image: var(--svb-sheet-ramp);
+  /* 左缘 1px 冷高光 + 顶缘 1px：玻璃与视频之间的收边靠它收一口光。 */
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  /* 不再有 mask-image：那几行 mask 就是"视频透进面板"的元凶。
+     右栏是硬边界，一块像素都不含视频。 */
+  /* 不透明层上 backdrop-filter 看不到任何东西，还会白跑一遍全区域模糊，去掉。 */
+}
+
+/* 接缝收边：整条叠在视频上（右端正好压在 videoRight），
+   从完全透明渐变到"玻璃在那一高度上的颜色"。
+   底色用与玻璃同一个变量，横向用 smoothstep 的 alpha 罩子；
+   右端 alpha=1 → 与玻璃左端逐像素同色，于是右栏里既没有视频、也没有色差。 */
+#svb-seam {
+  background-image: var(--svb-sheet-ramp);
+  /* 横向 alpha = smoothstep(t), t = x/220：t²(3-2t)，两端斜率为 0。
+     左边看不出"从哪里开始压暗"，右边也不会和玻璃撞出一条硬边。
+     下列 stop 即该曲线在 1/8 步长上的取值（误差 < 0.5%）。 */
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 0.043) 12.5%,
+    rgba(0, 0, 0, 0.156) 25%,
+    rgba(0, 0, 0, 0.316) 37.5%,
+    rgba(0, 0, 0, 0.5) 50%,
+    rgba(0, 0, 0, 0.684) 62.5%,
+    rgba(0, 0, 0, 0.844) 75%,
+    rgba(0, 0, 0, 0.957) 87.5%,
+    #000 100%
+  );
+  mask-image: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 0.043) 12.5%,
+    rgba(0, 0, 0, 0.156) 25%,
+    rgba(0, 0, 0, 0.316) 37.5%,
+    rgba(0, 0, 0, 0.5) 50%,
+    rgba(0, 0, 0, 0.684) 62.5%,
+    rgba(0, 0, 0, 0.844) 75%,
+    rgba(0, 0, 0, 0.957) 87.5%,
+    #000 100%
+  );
+}
+
+/* 跨所有右栏的同一盏灯，左端伸出接缝压在视频右下角。
+   只有这一层：每栏各画一个光斑会在栏边界重新起亮，读成几块独立的板。 */
+#svb-glow {
+  background-image:
+    /* 主光斑：圆心落在灯泡左端附近，往右下淡出。 */
+    radial-gradient(
+      30% 26% at 8% 104%,
+      rgba(226, 152, 88, calc(0.30 * var(--svb-glow, 1))),
+      rgba(212, 144, 82, calc(0.11 * var(--svb-glow, 1))) 46%,
+      rgba(212, 144, 82, 0) 78%
+    ),
+    /* 第二层更小更淡，只负责把主光斑的边缘化开。 */
+    radial-gradient(
+      30% 18% at 4% 101%,
+      rgba(226, 152, 88, calc(0.13 * var(--svb-glow, 1))),
+      rgba(212, 144, 82, 0) 72%
+    ),
+    /* 极淡的横向余晖，跨过接缝铺到视频那一侧，
+       让右侧的暖光和人物脚下的光读成同一盏灯。 */
+    linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.018),
+      rgba(255, 255, 255, 0) 160px
+    );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #svb-video {
+    display: none;
+  }
+}
