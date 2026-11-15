@@ -87,11 +87,13 @@
 - 最小驻留 3s 删除，驻留由素材时长本身承担。
 - 预载提前量 1.2s（`timeupdate` 里 `duration - currentTime <= 1.2` 触发预热）：本机 canplay 约 0.2s，留量是为了慢盘与首轮冷缓存。
 
+> 修订 #4 · 2026-11-15 13:06。观感双模式。用户 12:56 要求「恢复原来的肤色打光，能在 dark 和 dark-beautify 之间切换对比」。加 `DIM_MODES`（`dark` 侧 0.48 / 对话 0.54；`beautify` 全 0）与 `applyMode()/readMode()/toggleMode()`，只改 `--svb-side-dim` / `--svb-conv-dim` 两个变量，不动 DOM、不重编码素材，切换瞬时且可逆。默认 `dark`，选择写 `localStorage['svb-mode']`，快捷键 `Ctrl+Alt+M`，调试浮窗首行显示当前模式。**已知代价**：`beautify` 下对话列零遮罩，文字直接压在人物上，长回复的可读性要人眼判。
+
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
 **状态源**：`agent/assistant-stream` + `tools/execute` + `approval/request`（waterfall，必须 `return next()`）+ `agent/status` / `uiSession.sessionStatus`（兜底纠偏）。
 
-**开关**：设置页总开关 + `Ctrl+Alt+B`；素材缺失/解码失败自动禁用并回原生外观；桶内缺某一段时从桶里摘掉，摘空则该态并入 idle。
+**开关**：设置页总开关 + `Ctrl+Alt+B`；观感 `Ctrl+Alt+M`（dark ↔ beautify）；素材缺失/解码失败自动禁用并回原生外观；桶内缺某一段时从桶里摘掉，摘空则该态并入 idle。
 
 ## 关键数字（实测/自算）
 

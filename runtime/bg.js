@@ -46,6 +46,14 @@
   /** 宿主注入的素材桶。 */
   var pools = {}
   var stateSource = null
+  // 两种观感：dark 是默认的可读版（压 0.48/0.54 的暗蒙版）；
+  // beautify 把蒙版全撤，恢复素材原本的肤色与打光。切换只改变量，不动结构。
+  var DIM_MODES = {
+    dark: { side: 0.48, conv: 0.54 },
+    beautify: { side: 0, conv: 0 },
+  }
+  var MODE_KEY = 'svb-mode'
+  var mode = 'dark'
   var pollTimer = null
   var sseErrors = 0
   /** 每次换片自增，用来丢弃迟到的 canplay 回调。 */
@@ -410,7 +418,7 @@
     var isNew = snap && snap.current ? String(snap.current.isNew) : '-'
     var agents = snap && snap.agents ? snap.agents.length : 0
     debugText.textContent =
-      '快照态 ' + state + ' · 正在演 ' + (currentChosenState || '—') +
+      '快照态 ' + state + ' · 正在演 ' + (currentChosenState || '—') + ' · ' + mode +
       '\n播 ' + (currentClip || '—') + ' · ' + at + '/' + total +
       ' · 桶 ' + (currentPool ? currentPool.length : 0) + '#' + currentIndex +
       '\n底层 ' + underlyingState + ' · 预载 ' + (warmPlan ? warmPlan.clip : '—') +
@@ -464,15 +472,12 @@
         CONFIG.focusX + '% ' + CONFIG.focusY + '%',
       )
     }
-    if (typeof CONFIG.sidebarDim === 'number') {
-      document.documentElement.style.setProperty('--svb-side-dim', String(CONFIG.sidebarDim))
-    }
-    if (typeof CONFIG.convDim === 'number') {
-      document.documentElement.style.setProperty('--svb-conv-dim', String(CONFIG.convDim))
-    }
+    if (typeof CONFIG.sidebarDim === 'number') DIM_MODES.dark.side = CONFIG.sidebarDim
+    if (typeof CONFIG.convDim === 'number') DIM_MODES.dark.conv = CONFIG.convDim
     if (typeof CONFIG.glow === 'number') {
       document.documentElement.style.setProperty('--svb-glow', String(CONFIG.glow))
     }
+    applyMode(readMode(), false)
   }
 
   /**
@@ -586,6 +591,41 @@
         el.style.setProperty('border-left', '0', 'important')
       }
     }
+  }
+
+  /**
+   * 观感模式：dark / beautify。
+   *
+   * 只改两个 CSS 变量（`--svb-side-dim` / `--svb-conv-dim`），不动 DOM，也不碰视频本身——
+   * 所以切换是瞬时的、无损的、可逆的：素材一个像素都没被重新编码。
+   * dark 压 0.48/0.54 保证文字对比度；beautify 全撤，恢复素材原本的肤色和打光。
+   */
+  function applyMode(next, persist) {
+    var name = next === 'beautify' ? 'beautify' : 'dark'
+    var dims = DIM_MODES[name] || DIM_MODES.dark
+    mode = name
+    document.documentElement.setAttribute('data-svb-mode', name)
+    document.documentElement.style.setProperty('--svb-side-dim', String(dims.side))
+    document.documentElement.style.setProperty('--svb-conv-dim', String(dims.conv))
+    if (persist) {
+      try {
+        localStorage.setItem(MODE_KEY, name)
+      } catch (e) {}
+    }
+    renderDebug()
+    return mode
+  }
+
+  function readMode() {
+    try {
+      var saved = localStorage.getItem(MODE_KEY)
+      if (saved === 'beautify' || saved === 'dark') return saved
+    } catch (e) {}
+    return CONFIG.mode === 'beautify' ? 'beautify' : 'dark'
+  }
+
+  function toggleMode() {
+    return applyMode(mode === 'dark' ? 'beautify' : 'dark', true)
   }
 
   function placeVideo(regionW, cssH, offsetX) {
@@ -855,9 +895,14 @@
   }
 
   addEventListener('keydown', function (event) {
-    if (event.ctrlKey && event.altKey && (event.key === 'b' || event.key === 'B')) {
+    if (!event.ctrlKey || !event.altKey) return
+    var key = String(event.key || '').toLowerCase()
+    if (key === 'b') {
       event.preventDefault()
       toggle()
+    } else if (key === 'm') {
+      event.preventDefault()
+      toggleMode()
     }
   })
 
@@ -874,6 +919,11 @@
     toggle: toggle,
     relayout: schedule,
     setState: setState,
+    setMode: applyMode,
+    toggleMode: toggleMode,
+    get mode() {
+      return mode
+    },
     get state() {
       return state
     },
