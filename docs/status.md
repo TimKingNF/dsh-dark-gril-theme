@@ -198,7 +198,7 @@
 | `93582d5` | S3：配置单一真相源（`lib/config.js`）+ 设置页两个开关（`client.js`） |
 | `7935e9d` | S3：设置页真机验证通过 + 修深色面板上的文字对比度 |
 | `475468c` | 调试浮窗 v2（拖动 / 五栏卡 / 事件流水）+ `hasStarted` 哨兵与起播兜底 |
-| `72078cb` | 修订 #10：4 态重排（speaking → thinking，listening → acting），单测同步 |
+| `1b20235` | 修订 #10：4 态重排（speaking → thinking，listening → acting），单测同步 |
 
 ## 下一步
 
