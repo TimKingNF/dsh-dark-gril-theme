@@ -1,6 +1,6 @@
 # 进度总结
 
-> 快照：2026-11-15 15:15（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #8（设置页真机验证 + 深色皮肤对比度）
+> 快照：2026-11-15 15:32（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #9（调试浮窗 v2：拖动 / 分栏 / 监听态与预载可视化）
 
 ## 一句话状态
 
@@ -30,7 +30,7 @@
 | 预加载（剩余 1.2s 预热到另一 video 元素） | 完成 | `warmNextClip()` / `timeupdate`；实测换片后 50ms 内 `currentTime` 已在走 |
 | 观感双模式 dark / beautify | 完成 | `DIM_MODES` + `applyMode()`，只改 CSS 变量；`Ctrl+Alt+M` |
 | dark 模式光斑与玻璃色阶一起压暗 | 完成 | `DARK_RAMP` + `--dgt-glow`；左下角 p50 31.5→24.7 |
-| 调试浮窗（快照态 / 正在演 / 桶序 / 预载 / 源 / seq） | 完成 | `startDebug()` / `renderDebug()`，`CONFIG.debug` 为真时挂 `#dgt-debug` |
+| 调试浮窗 v2（拖动 + 五卡分栏 + 事件流水） | 完成，真机已验 | `runtime/bg.js` `startDebug()` / `renderDebug()`：标题条可拖动（位置存 `sessionStorage['dgt-debug-pos']`）、可折叠、五张卡（在听什么 / 在演什么 / 下一段 / 轮播桶 chips / 最近变化），`debugSet()` 定点更新 |
 | 联调捷径 | 完成 | dev server 新增 `/config.json` 与 `/inject.js`，控制台一行注入 |
 | S3 配置单一真相源 | 完成 | `lib/config.js`：白名单校验 + 同目录 tmp → rename 原子写；缺文件 / 坏 JSON 退化默认并 warn |
 | S3 配置读写路由 | 完成 | `index.js` `CONFIG_ROUTE`：GET 回全量配置，POST 回 200 `{ok:true,config}` / 400 `no-valid-key` / 500 `write-failed`；请求体上限 64KB |
@@ -148,6 +148,14 @@
 > ③ 改法：前景一律 `color: inherit` 继承面板自身文字色，副文案用 `opacity: 0.62` 分层次；开关轨道 off `rgba(127,127,127,0.35)`、on `#3b82f6`（对齐皮肤里的 `--dsw-alias-trajectory-accent`）、圆钮 `#ffffff`。不再引用 `--dsw-alias-label-*` 当前景色（仅保留报警文案的 `--dsw-alias-label-warning`）。
 > ④ 复验：提示文字 computed color 变 `rgb(232, 237, 247)` / opacity 0.62，截图可读。
 
+> 修订 #9 · 2026-11-15 15:32。调试浮窗重做。用户原话（15:11）：「把 debug 窗口改成可以拖动，然后对文字进行换行分栏，让信息更加清晰。要包含当前监听的是什么状态，下一个预载的视频是什么（如果是轮播的话）等」。
+> ① 结构：单个 `<pre>` 换成「标题条 + 两栏网格 + 两张通栏」。卡一到卡三各 4–5 行「标签 → 值」，值 `overflow-wrap: anywhere` 自动换行；卡四把当前桶的每一段渲染成 chip（`▶` 当前、`⏭` 预载目标），卡五是最近 8 条事件流水。
+> ② 拖动：只有标题条可拖（`pointerdown` + `setPointerCapture` + 指针捕获失败时退回 `document` 监听），位置写 `sessionStorage['dgt-debug-pos']`（刷新仍在、关浏览器即弃，不污染配置文件）；右上 `−`/`+` 折叠只藏网格、留标题条，折叠状态不存盘。
+> ③ 为什么要「在听什么」单独一卡：原先把「快照态」和「正在演」并排放，看不出一段滞后多久。现在把 SSE 源、监听态、快照号与到达时间、会话号与底层态放一起，「到达 2.7s 前」直接说明这条快照停了多久；播放卡里的「元素 video A · rs0」当场暴露解码没起来。
+> ④ 起播兜底：`ensurePlaying(reason)` 在 `enable()`、4s 看门狗、`visibilitychange` 回到前台三处触发，最多 3 次；`__DGT_API__.retryPlay()` 手动重试。副标题过滤空字段（没起播时显示「未起播」而不是两个连着的圆点）。
+> ⑤ 踩坑：第一版兜底拿 `currentClip !== null` 当哨兵，而 `currentClip` 初值是空串（`var currentClip = ''`）——守卫第一次就早退，日志里连「起播」都不出现。改成独立布尔 `hasStarted`（`commit()` 置真、`disable()` 归假）后才跑通。**教训：用「值不是空」代替「状态已发生」，在初值是空串的变量上必然失灵。**
+> ⑥ 真机：拖动（合成 PointerEvent）后 rect 从 [12,196] → [262,76]、`sessionStorage` 记到 `{"left":262,"top":75.5}`；折叠切换 `.is-collapsed` 与 `display:none` 正确；事件流水实时滚动（`15:25:42 监听态 acting → thinking · sse`）。播放卡与预载卡在本窗口恒空——原因是 `document.visibilityState === 'hidden'`，Chrome 推迟媒体加载（见已知限制 3），不是代码问题。
+
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
 **状态源**：`agent/assistant-stream` + `tools/execute` + `approval/request`（waterfall，必须 `return next()`）+ `agent/status` / `uiSession.sessionStatus`（兜底纠偏）。
@@ -166,7 +174,7 @@
 
 1. **安装方式不是 `dsh plugin add`**：沙箱内那条命令恒报 `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK … Read-only file system`，`dsh web --help` 也会写 `~/.dsh/profiles/web/cordis.yml` 被拒。实际做法是 `pnpm link` 装进 `~/.dsh/profiles/web`（dependencies 里 `"dsh-dark-gril-theme": "link:/mnt/d/workspace/dsh-dark-gril-theme"`，`node_modules/` 下是指向工作区的符号链接，`dsh.profile.bundles` 最后一项也是它）。**改宿主侧代码必须重启 DSH 进程**（profile 没有 `dsh-hmr`，存盘不触发重载）；改 `client.js` 只需刷新页面。
 2. **拖窗口尺寸没亲手验过**：`bsk` 的外层窗口 resize 被播放中的视频挡住（`media source changed`），只验了布局变化下的跟随链路。
-3. **后台窗口解不出视频帧（已查明，非代码问题）**：Agent Window 默认后台打开时 `document.visibilityState` 为 `hidden`，Chrome 推迟媒体加载，`<video>` 恒停 `readyState 0`、事件只有 `loadstart → stalled`；同一 URL 的 `fetch` 仍是 206/59ms，同页 `curl` 5.4MB/52ms。**bsk 验收必须 `bsk_session start … noFocus:false` 开在前台窗口**，否则会把测试环境当成代码故障。
+3. **后台窗口解不出视频帧（已查明，非代码问题）**：Agent Window 默认后台打开时 `document.visibilityState` 为 `hidden`，Chrome 推迟媒体加载，`<video>` 恒停 `readyState 0`、事件只有 `loadstart → stalled`；同一 URL 的 `fetch` 仍是 206/59ms，同页 `curl` 5.4MB/52ms。**bsk 验收必须 `bsk_session start … noFocus:false` 开在前台窗口**，否则会把测试环境当成代码故障。插件侧对此的应对是 `ensurePlaying()` 三处重试 + `__DGT_API__.retryPlay()`，回到前台自动再推一次。
 4. **截不到 docked 三/四栏**：本机 dsh-better-sidebar 是浮动模式，网格第三列恒为 0。
 5. **右栏那道 1px 白边靠 DOM 现状抹除**：它来自宿主面板的 `border-left: 0.666667px rgba(255,255,255,0.2)`（DPR 1.5 下正好一个设备像素、+23 亮度）。`clearEdgeBorder()` 每次布局按坐标重扫并置 0，宿主若改用它法画边（box-shadow / 伪元素 / 背景图），这里要跟着改。
 6. **host→SSE→client 没端到端跑过**：主机侧状态机、SSE 路由、client 消费三段各自验过（单测 / dev server `/config.json`+`/inject.js` / 页面里 `setState()` 假快照），但没有一次真实的 Agent 回合经 SSE 推过来驱动换态。装插件后第一件事就是跑这个。
@@ -190,7 +198,8 @@
 | --- | --- | --- | --- |
 | ~~S2~~ | ~~host 状态机 + SSE 推状态 + client 桶轮播与 acting 插入~~ **已完成** | 完成 | 假快照下 5 态、整段播完、桶内不重复、acting 交替均已验；真回合端到端见下一行 |
 | S2.5 | 真装插件（`dsh plugin --profile web add`）+ 真实回合端到端 | 0.5h | 一次真实回合能在页面上看到 thinking→speaking→idle 的自动切换；`/state` SSE 连上且不断流 |
-| S3 | 设置页开关 + `Ctrl+Alt+B` + 配置文件 | 实现完成 | 关掉后无残留、刷新后状态保持 —— 代码与单测已齐，差重启后真机点一遍 |
+| ~~S3~~ | ~~设置页开关 + `Ctrl+Alt+B` + 配置文件~~ **已完成** | 完成 | 关掉后无残留、刷新后状态保持 —— 真机点过开关，配置文件与页面运行时双向一致 |
+| S3.5 | 调试浮窗 v2（拖动 / 分栏 / 监听态 / 预载可视化） | 完成 | 真机验过拖动、折叠、事件流水；播放与预载卡待用户前台窗口确认 |
 | S4 | 脚本化验收（5 态截图 + 右栏取色 + 帧时间 + 残留检测） | 1.5h | 脚本一条命令出报告 |
 | S5 | 打磨（光斑与人物过渡、素材缺失兜底文案） | 1h | 用户主观通过 |
 

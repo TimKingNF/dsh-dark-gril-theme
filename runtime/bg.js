@@ -35,6 +35,8 @@
   var video = null
   /** 当前在播的素材名、它所属的桶、它在桶里的下标（不连续重复要用）。 */
   var currentClip = ''
+  // currentClip 的初值是空串，不能当哨兵：'还没有画面' 和 '播过至少一段' 要分开记。
+  var hasStarted = false
   var currentPool = null
   var currentIndex = -1
   /** 当前这一段是替哪个态播的（acting 与底层态交替时要用）。 */
@@ -78,8 +80,14 @@
   var warmPlan = null
   /** 调试浮窗；只有 CONFIG.debug 为真才建。 */
   var debugEl = null
-  var debugText = null
   var debugTimer = null
+  /** 调试窗里的值节点、桶列表、事件流水，按引用更新，避免每 250ms 重建 DOM。 */
+  var debugFields = {}
+  var debugPoolEl = null
+  var debugLogEl = null
+  var debugLog = []
+  /** 最近一次收到快照的时刻，用来显示「这条状态多新」。 */
+  var lastSnapshotAt = 0
   /** 状态来自哪：sse / poll / manual，排障时要看这个。 */
   var sourceKind = 'manual'
   var scrimSide = null
@@ -208,6 +216,7 @@
     if (!plan) return
     var el = videos[(videoIndex + 1) % videos.length]
     warmPlan = plan
+    logDebug('预载 ' + plan.clip + ' · ' + plan.state + ' #' + plan.index + '/' + plan.pool.length)
     if (el.dataset.clip === plan.clip && el.readyState >= 2) return
     el.dataset.clip = plan.clip
     el.src = videoUrlFor(plan.clip)
@@ -285,11 +294,14 @@
       videoIndex = nextIndex
       video = incoming
       currentClip = decision.clip
+      hasStarted = true
       currentPool = decision.pool
       currentIndex = decision.index
       currentChosenState = decision.state
       if (decision.state !== 'acting') underlyingState = decision.state
       state = decision.state
+      startAttempts = 0
+      logDebug('播 ' + decision.clip + ' · ' + decision.state + ' #' + decision.index + '/' + decision.pool.length)
       schedule()
       // 淡出跑完（400ms）再把旧元素停掉：停早了会截掉最后几帧。
       setTimeout(function () {
@@ -327,9 +339,14 @@
 
   function applySnapshot(snap) {
     if (!snap || typeof snap !== 'object') return
+    var prev = latestSnapshot && latestSnapshot.current ? latestSnapshot.current.state : null
     latestSnapshot = snap
+    lastSnapshotAt = Date.now()
     var name = snap.current && typeof snap.current.state === 'string' ? snap.current.state : 'idle'
     state = name
+    if (prev !== name) {
+      logDebug('监听态 ' + (prev === null ? '→ ' : prev + ' → ') + name + ' · ' + sourceKind)
+    }
     maybeHardCut()
   }
 
@@ -401,13 +418,231 @@
 
   // ── 调试浮窗 ────────────────────────────────────────
 
+  var DEBUG_POS_KEY = 'dgt-debug-pos'
+  var startAttempts = 0
+
+  function debugClock(at) {
+    var d = new Date(at)
+    function pad(n) {
+      return n < 10 ? '0' + n : String(n)
+    }
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds())
+  }
+
+  /** 事件流水：只在调试窗开着时记，关掉就清空，不占常驻内存。 */
+  function logDebug(text) {
+    if (!debugEl) return
+    debugLog.push({ at: Date.now(), text: text })
+    if (debugLog.length > 8) debugLog.shift()
+    renderDebugLog()
+  }
+
+  function renderDebugLog() {
+    if (!debugLogEl) return
+    debugLogEl.textContent = ''
+    if (debugLog.length === 0) {
+      var empty = document.createElement('li')
+      empty.className = 'is-empty'
+      empty.textContent = '（还没有状态变化）'
+      debugLogEl.appendChild(empty)
+      return
+    }
+    for (var i = debugLog.length - 1; i >= 0; i -= 1) {
+      var li = document.createElement('li')
+      var t = document.createElement('span')
+      t.className = 'dgt-debug-t'
+      t.textContent = debugClock(debugLog[i].at)
+      var m = document.createElement('span')
+      m.textContent = debugLog[i].text
+      li.appendChild(t)
+      li.appendChild(m)
+      debugLogEl.appendChild(li)
+    }
+  }
+
+  function debugSet(key, value) {
+    var el = debugFields[key]
+    if (el && el.textContent !== value) el.textContent = value
+  }
+
+  /** 一张卡片：标题 + 若干「标签 / 值」行；值的节点记进 debugFields 供后续按引用更新。 */
+  function debugCard(title, rows, wide) {
+    var card = document.createElement('section')
+    card.className = 'dgt-debug-card' + (wide ? ' is-wide' : '')
+    var h = document.createElement('h3')
+    h.textContent = title
+    card.appendChild(h)
+    for (var i = 0; i < rows.length; i += 1) {
+      var row = document.createElement('div')
+      row.className = 'dgt-debug-row'
+      var k = document.createElement('span')
+      k.className = 'dgt-debug-k'
+      k.textContent = rows[i][0]
+      var v = document.createElement('span')
+      v.className = 'dgt-debug-v'
+      row.appendChild(k)
+      row.appendChild(v)
+      card.appendChild(row)
+      debugFields[rows[i][1]] = v
+    }
+    return card
+  }
+
+  function clampDebugPos(left, top) {
+    var w = debugEl.offsetWidth || 460
+    var h = debugEl.offsetHeight || 200
+    return {
+      left: Math.min(Math.max(0, left), Math.max(0, window.innerWidth - w)),
+      top: Math.min(Math.max(0, top), Math.max(0, window.innerHeight - h)),
+    }
+  }
+
+  function applyDebugPos(left, top) {
+    var pos = clampDebugPos(left, top)
+    debugEl.style.left = pos.left + 'px'
+    debugEl.style.top = pos.top + 'px'
+    debugEl.style.bottom = 'auto'
+    debugEl.style.right = 'auto'
+  }
+
+  function saveDebugPos() {
+    try {
+      sessionStorage.setItem(
+        DEBUG_POS_KEY,
+        JSON.stringify({
+          left: parseFloat(debugEl.style.left) || 0,
+          top: parseFloat(debugEl.style.top) || 0,
+        }),
+      )
+    } catch (error) {
+      /* 无痕模式等场景写不进去，位置就只在本页有效 */
+    }
+  }
+
+  /**
+   * 标题条拖动。位置只存 sessionStorage：它是查看时的临时摆放，不是配置，
+   * 不进 $DSH_HOME 那份唯一真相源，重开标签页即回到左下角默认位。
+   */
+  function makeDebugDraggable(head) {
+    try {
+      var saved = JSON.parse(sessionStorage.getItem(DEBUG_POS_KEY) || 'null')
+      if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') {
+        applyDebugPos(saved.left, saved.top)
+      }
+    } catch (error) {
+      /* 坏值当没存过 */
+    }
+
+    head.addEventListener('pointerdown', function (event) {
+      if (event.button !== 0) return
+      if (event.target && event.target.tagName === 'BUTTON') return
+      event.preventDefault()
+      var rect = debugEl.getBoundingClientRect()
+      var dx = event.clientX - rect.left
+      var dy = event.clientY - rect.top
+      applyDebugPos(rect.left, rect.top)
+      try {
+        head.setPointerCapture(event.pointerId)
+      } catch (error) {
+        /* 忽略 */
+      }
+      function move(ev) {
+        applyDebugPos(ev.clientX - dx, ev.clientY - dy)
+      }
+      function up(ev) {
+        head.removeEventListener('pointermove', move)
+        head.removeEventListener('pointerup', up)
+        head.removeEventListener('pointercancel', up)
+        try {
+          head.releasePointerCapture(ev.pointerId)
+        } catch (error) {
+          /* 忽略 */
+        }
+        saveDebugPos()
+      }
+      head.addEventListener('pointermove', move)
+      head.addEventListener('pointerup', up)
+      head.addEventListener('pointercancel', up)
+    })
+
+    // 窗口缩小后别把窗留在屏幕外。
+    window.addEventListener('resize', function () {
+      if (!debugEl || debugEl.style.top === '') return
+      applyDebugPos(parseFloat(debugEl.style.left) || 0, parseFloat(debugEl.style.top) || 0)
+    })
+  }
+
   function startDebug() {
     if (debugEl) return
     debugEl = document.createElement('div')
     debugEl.id = 'dgt-debug'
-    debugText = document.createElement('pre')
-    debugEl.appendChild(debugText)
+
+    var head = document.createElement('div')
+    head.className = 'dgt-debug-head'
+    var title = document.createElement('span')
+    title.className = 'dgt-debug-title'
+    title.textContent = 'DGT 调试'
+    var sub = document.createElement('span')
+    sub.className = 'dgt-debug-sub'
+    sub.id = 'dgt-debug-sub'
+    var fold = document.createElement('button')
+    fold.type = 'button'
+    fold.className = 'dgt-debug-fold'
+    fold.title = '折叠 / 展开'
+    fold.textContent = '−'
+    fold.addEventListener('click', function () {
+      var folded = debugEl.classList.toggle('is-collapsed')
+      fold.textContent = folded ? '+' : '−'
+    })
+    head.appendChild(title)
+    head.appendChild(sub)
+    head.appendChild(fold)
+    debugEl.appendChild(head)
+
+    var grid = document.createElement('div')
+    grid.className = 'dgt-debug-grid'
+    grid.appendChild(
+      debugCard('状态源 · 在听什么', [
+        ['源', 'source'],
+        ['监听态', 'listen'],
+        ['快照', 'snapshot'],
+        ['到达', 'age'],
+        ['会话', 'session'],
+      ]),
+    )
+    grid.appendChild(
+      debugCard('播放 · 在演什么', [
+        ['态', 'playing'],
+        ['素材', 'clip'],
+        ['进度', 'progress'],
+        ['元素', 'slot'],
+        ['剩余', 'remain'],
+      ]),
+    )
+    grid.appendChild(
+      debugCard('预载 · 下一段', [
+        ['素材', 'warm'],
+        ['对应态', 'warmState'],
+        ['桶序', 'warmIndex'],
+        ['就绪', 'warmReady'],
+        ['边界策略', 'boundary'],
+      ]),
+    )
+    var poolCard = debugCard('当前轮播桶', [], true)
+    debugPoolEl = document.createElement('div')
+    debugPoolEl.className = 'dgt-debug-chips'
+    poolCard.appendChild(debugPoolEl)
+    grid.appendChild(poolCard)
+    var logCard = debugCard('最近变化', [], true)
+    debugLogEl = document.createElement('ol')
+    debugLogEl.className = 'dgt-debug-log'
+    logCard.appendChild(debugLogEl)
+    grid.appendChild(logCard)
+    debugEl.appendChild(grid)
+
     document.body.appendChild(debugEl)
+    makeDebugDraggable(head)
+    renderDebugLog()
     debugTimer = setInterval(renderDebug, 250)
     renderDebug()
   }
@@ -420,26 +655,99 @@
     if (debugEl) {
       debugEl.remove()
       debugEl = null
-      debugText = null
     }
+    debugFields = {}
+    debugPoolEl = null
+    debugLogEl = null
+    debugLog = []
   }
 
   function renderDebug() {
-    if (!debugText) return
+    if (!debugEl) return
     var el = video
-    var total = el && isFinite(el.duration) ? el.duration.toFixed(2) : '0'
-    var at = el ? el.currentTime.toFixed(2) : '0'
+    var total = el && isFinite(el.duration) ? el.duration : 0
+    var at = el ? el.currentTime : 0
     var snap = latestSnapshot
+    var cur = snap && snap.current ? snap.current : null
     var seq = snap && typeof snap.seq === 'number' ? snap.seq : '-'
-    var isNew = snap && snap.current ? String(snap.current.isNew) : '-'
     var agents = snap && snap.agents ? snap.agents.length : 0
-    debugText.textContent =
-      '快照态 ' + state + ' · 正在演 ' + (currentChosenState || '—') + ' · ' + mode +
-      '\n播 ' + (currentClip || '—') + ' · ' + at + '/' + total +
-      ' · 桶 ' + (currentPool ? currentPool.length : 0) + '#' + currentIndex +
-      '\n底层 ' + underlyingState + ' · 预载 ' + (warmPlan ? warmPlan.clip : '—') +
-      ' · 源 ' + sourceKind +
-      '\n快照 seq' + seq + ' · isNew ' + isNew + ' · 会话 ' + agents
+    var age = lastSnapshotAt ? (Date.now() - lastSnapshotAt) / 1000 : null
+
+    debugSet(
+      'source',
+      sourceKind === 'sse'
+        ? 'SSE' + (sseErrors ? '（重连 ' + sseErrors + '）' : ' · 在线')
+        : sourceKind === 'poll'
+          ? '轮询 1s'
+          : '手动 setState',
+    )
+    debugSet('listen', cur ? cur.state + (cur.isNew ? ' · 新会话' : '') : '—')
+    debugSet('snapshot', '#' + seq + (snap && snap.time ? ' · ' + debugClock(snap.time) : ''))
+    debugSet('age', age === null ? '—' : (age < 10 ? age.toFixed(1) : String(Math.round(age))) + 's 前')
+    debugSet('session', '会话 ' + agents + ' · 底层 ' + underlyingState)
+
+    debugSet('playing', currentChosenState || '—')
+    debugSet('clip', currentClip || '—')
+    debugSet(
+      'progress',
+      total > 0
+        ? at.toFixed(2) + ' / ' + total.toFixed(2) + ' · ' + Math.round((at / total) * 100) + '%'
+        : at.toFixed(2) + ' / —',
+    )
+    debugSet('slot', 'video ' + (videoIndex === 0 ? 'A' : 'B') + (el && el.readyState < 3 ? ' · rs' + el.readyState : ''))
+    debugSet('remain', total > 0 ? Math.max(0, total - at).toFixed(2) + 's' : '—')
+
+    var warm = warmPlan
+    var warmEl = videos.length > 1 ? videos[(videoIndex + 1) % videos.length] : null
+    debugSet('warm', warm ? warm.clip : '（还没预载）')
+    debugSet('warmState', warm ? warm.state : '—')
+    debugSet('warmIndex', warm && warm.pool ? '#' + warm.index + ' / ' + warm.pool.length : '—')
+    debugSet(
+      'warmReady',
+      warm && warmEl && warmEl.dataset.clip === warm.clip
+        ? 'rs' + warmEl.readyState + (warmEl.readyState >= 2 ? ' 可播' : ' 未就绪')
+        : '—',
+    )
+    debugSet('boundary', warm ? '态不变→用预载，态变了→现抽' : '剩 1.2s 时才开始预载')
+
+    var sub = document.getElementById('dgt-debug-sub')
+    if (sub) {
+      // 空字段直接跳过：没起播时 currentChosenState 是空串，别留下两个连着的圆点。
+      var parts = [mode, currentChosenState, sourceKind, hasStarted ? '' : '未起播']
+      sub.textContent = parts.filter(function (part) {
+        return part !== ''
+      }).join(' · ')
+    }
+
+    renderDebugPool()
+  }
+
+  /** 桶成员铺开：▶ 当前，⏭ 预载目标。整行 chip，长名字自动换行。 */
+  function renderDebugPool() {
+    if (!debugPoolEl) return
+    if (!currentPool || currentPool.length === 0) {
+      debugPoolEl.textContent = '（还没有桶）'
+      return
+    }
+    var warmIndex = warmPlan && warmPlan.pool === currentPool ? warmPlan.index : -1
+    var key = currentPool.join('|') + '@' + currentIndex + '@' + warmIndex
+    if (debugPoolEl.dataset.key === key) return
+    debugPoolEl.dataset.key = key
+    debugPoolEl.textContent = ''
+    for (var i = 0; i < currentPool.length; i += 1) {
+      var chip = document.createElement('span')
+      var mark = ''
+      chip.className = 'dgt-debug-chip'
+      if (i === currentIndex) {
+        chip.className += ' is-current'
+        mark = '▶ '
+      } else if (i === warmIndex) {
+        chip.className += ' is-warm'
+        mark = '⏭ '
+      }
+      chip.textContent = mark + currentPool[i]
+      debugPoolEl.appendChild(chip)
+    }
   }
 
   function buildHost() {
@@ -889,6 +1197,27 @@
     watch()
     startStateStream()
     if (CONFIG.debug === true) startDebug()
+    ensurePlaying('启动')
+    // 后台标签页里 Chrome 会把媒体加载挂起（readyState 一直是 0、canplay 永远不来），
+    // 回到前台再推一次；4 秒还空着也补一次，免得页面整块黑着没人知道为什么。
+    setTimeout(function () {
+      ensurePlaying('4s 无画面')
+    }, 4000)
+  }
+
+  /**
+   * 起播兜底。canplay 不来时 playClip 已经发了 src，但 hasStarted 还是 false，
+   * 这时再决定一段、再挂一次 canplay 是唯一能自救的动作；最多重试 3 次，别变成死循环。
+   */
+  function ensurePlaying(reason) {
+    if (!host) return
+    if (hasStarted) return
+    if (startAttempts >= 3) {
+      logDebug('仍无画面（' + reason + '），已重试 ' + startAttempts + ' 次')
+      return
+    }
+    startAttempts += 1
+    logDebug('起播（' + reason + '）')
     playClip(decideNext())
   }
 
@@ -919,6 +1248,8 @@
       host = null
       video = null
       currentClip = ''
+      hasStarted = false
+      startAttempts = 0
       currentPool = null
       currentIndex = -1
       currentChosenState = ''
@@ -954,6 +1285,10 @@
     playClip(decideNext())
   }
 
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') ensurePlaying('回到前台')
+  })
+
   addEventListener('keydown', function (event) {
     if (!event.ctrlKey || !event.altKey) return
     var key = String(event.key || '').toLowerCase()
@@ -982,6 +1317,10 @@
     setMode: applyMode,
     toggleMode: toggleMode,
     setDebug: setDebug,
+    retryPlay: function () {
+      startAttempts = 0
+      ensurePlaying('手动重试')
+    },
     get debug() {
       return debugEl !== null
     },
