@@ -157,18 +157,23 @@ html[data-svb='on'] body {
   -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 32px);
   mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 32px);
   background-image:
-    /* 主光斑：圆心落在灯泡左端附近，往右下淡出。 */
+    /* 主光斑：圆心落在灯泡左端附近，往右上淡出。
+       五档而不是三档——两档之间跨度太大时，中间会读出一圈可见的色阶，
+       这就是之前那个「圆形往外扩散」的边界感。每档只降一点，落成指数衰减。 */
     radial-gradient(
-      30% 26% at 8% 104%,
-      rgba(226, 152, 88, calc(0.30 * var(--svb-glow, 1))),
-      rgba(212, 144, 82, calc(0.11 * var(--svb-glow, 1))) 46%,
-      rgba(212, 144, 82, 0) 78%
+      30% 23% at 6% 103%,
+      rgba(226, 152, 88, calc(0.26 * var(--svb-glow, 1))),
+      rgba(221, 147, 86, calc(0.185 * var(--svb-glow, 1))) 21%,
+      rgba(214, 145, 84, calc(0.12 * var(--svb-glow, 1))) 43%,
+      rgba(206, 140, 82, calc(0.055 * var(--svb-glow, 1))) 66%,
+      rgba(200, 138, 80, 0) 100%
     ),
-    /* 第二层更小更淡，只负责把主光斑的边缘化开。 */
+    /* 更宽的一层铺垫：把主光斑的尾巴再拖长一倍，让「亮」到「暗」没有落点。 */
     radial-gradient(
-      30% 18% at 4% 101%,
-      rgba(226, 152, 88, calc(0.13 * var(--svb-glow, 1))),
-      rgba(212, 144, 82, 0) 72%
+      40% 30% at 2% 101%,
+      rgba(226, 152, 88, calc(0.085 * var(--svb-glow, 1))),
+      rgba(210, 142, 84, calc(0.028 * var(--svb-glow, 1))) 58%,
+      rgba(205, 140, 82, 0) 100%
     ),
     /* 极淡的横向余晖，只在右区里化开暖光，不再往视频那边铺。 */
     linear-gradient(
