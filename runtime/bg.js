@@ -49,8 +49,10 @@
   // 两种观感：dark 是默认的可读版（压 0.48/0.54 的暗蒙版）；
   // beautify 把蒙版全撤，恢复素材原本的肤色与打光。切换只改变量，不动结构。
   var DIM_MODES = {
-    dark: { side: 0.48, conv: 0.54 },
-    beautify: { side: 0, conv: 0 },
+    // glow 跟 conv 反着走：对话区压 0.54，光斑就只剩 0.46，
+    // 这样切到 dark 时画面和光一起变暗，不会剩一块没被压的暖光。
+    dark: { side: 0.48, conv: 0.54, glow: 0.46 },
+    beautify: { side: 0, conv: 0, glow: 1 },
   }
   var MODE_KEY = 'svb-mode'
   var mode = 'dark'
@@ -474,9 +476,7 @@
     }
     if (typeof CONFIG.sidebarDim === 'number') DIM_MODES.dark.side = CONFIG.sidebarDim
     if (typeof CONFIG.convDim === 'number') DIM_MODES.dark.conv = CONFIG.convDim
-    if (typeof CONFIG.glow === 'number') {
-      document.documentElement.style.setProperty('--svb-glow', String(CONFIG.glow))
-    }
+    if (typeof CONFIG.glow === 'number') DIM_MODES.dark.glow = CONFIG.glow
     applyMode(readMode(), false)
   }
 
@@ -607,6 +607,7 @@
     document.documentElement.setAttribute('data-svb-mode', name)
     document.documentElement.style.setProperty('--svb-side-dim', String(dims.side))
     document.documentElement.style.setProperty('--svb-conv-dim', String(dims.conv))
+    document.documentElement.style.setProperty('--svb-glow', String(dims.glow))
     if (persist) {
       try {
         localStorage.setItem(MODE_KEY, name)
