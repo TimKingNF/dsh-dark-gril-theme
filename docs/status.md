@@ -203,6 +203,14 @@
 > ③ 改法：加第二道门 isJsonWrite(req) —— 写请求必须是 application/json 正文，否则 403 not-json-write。跨站 form 只能发 text/plain、urlencoded、multipart，发不出 JSON；跨站 fetch 发 JSON 必须先过预检，而本服务不返回任何 CORS 头，预检必然失败。这道门不依赖中继是否转发某个头。
 > ④ 验证：本地起临时服务（DSH_HOME 指到临时目录）实测 text/plain → 403、urlencoded → 403、带 Origin: evil 的 JSON → 403、无 Origin 的 JSON → 200 且文件真的写成。重启宿主后在同一条 GUI 链路上复测：text/plain → 403，JSON → 200。
 > ⑤ 教训：跨源保护要按「请求能不能被跨站构造出来」设计，别只看请求头；本机能直连后端端口时，前端端口上看到的头集合不等于后端看到的。
+
+> 修订 #16 · 2026-11-15 16:52。发布 v0.1.0。
+> ① 许可：`LICENSE` 换成 GPL-3.0 全文（34,024 字符，取自 gnu.org/licenses/gpl-3.0.txt），`package.json` 的 `license` 从 MIT 改为 `GPL-3.0-or-later`；`npm pack` 清单里 `LICENSE` 为 34.0kB。
+> ② README 改成 npm 安装口径：`dsh plugin --profile web add dsh-dark-gril-theme` 为主，等价写法 `cd ~/.dsh/profiles/web && pnpm add dsh-dark-gril-theme`；素材仍从 `assets` 分支下载。
+> ③ `--profile` 必须写在 `add` 之前。实测写在后面（`dsh plugin why <pkg> --profile web`）报 `error: required option '--profile <name>' not specified`，因为该选项不会被转发给 pnpm。
+> ④ npm 发布没成：本机 `npm whoami` 报 `ENEEDAUTH`，且 registry 指向华为云镜像 `https://mirrors.huaweicloud.com/repository/npm/`（镜像不收包）。要真发 npm 需先 `npm config set registry https://registry.npmjs.org` 再 `npm login`。
+> ⑤ 沙箱里 `dsh plugin` 本身跑不了：写 `~/.dsh/profiles/web/package.json.lock` 时报 `EROFS: read-only file system`，所以 README 的安装步骤只验到参数解析，没真装一遍（限制 10 仍成立）。
+> ⑥ `git push origin main` 与 `git push origin v0.1.0` 都成功，tag `v0.1.0` 已到远端。
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
 **状态源**：`agent/assistant-stream` + `tools/execute` + `approval/request`（waterfall，必须 `return next()`）+ `agent/status` / `uiSession.sessionStatus`（兜底纠偏）。
@@ -253,6 +261,8 @@
 | `51b50f6` | 修订 #14：素材目录外置解析、轮播规则注入、跨源写保护、发布物与文档齐备 |
 | `e2a8af5` | docs：README 换双模式宣传图，清掉 s1 过程截图 |
 | `7523614` | 修订 #15：写配置补 `application/json` 门（GUI 中继会吞 Origin） |
+| `d2b7b34` | 修订 #16：许可改 GPL-3.0-or-later、README 改 npm 安装口径、tag `v0.1.0` |
+| `a281dd0` | docs：`dsh plugin` 的 `--profile` 必须写在 `add` 之前 |
 
 ## 下一步
 
@@ -264,7 +274,7 @@
 | S3.5 | 调试浮窗 v2（拖动 / 分栏 / 监听态 / 预载可视化） | 完成 | 真机验过拖动、折叠、事件流水；播放与预载卡待用户前台窗口确认 |
 | S4 | 脚本化验收（5 态截图 + 右栏取色 + 帧时间 + 残留检测） | 1.5h | 脚本一条命令出报告 |
 | S5 | 打磨（光斑与人物过渡、素材缺失兜底文案） | 1h | 用户主观通过 |
-| S6 | 发布：npm 发包或 `dsh plugin add` 走通 + 干净 profile 安装验证 | 0.5h | 一台干净环境按 README 装成功并看到画面 |
+| S6 | 发布：GPL-3.0 与 npm 安装口径已就绪，tag `v0.1.0` 已推；差 npm 登录后 `npm publish --registry https://registry.npmjs.org` 与干净 profile 安装验证 | 0.5h | 一台干净环境按 README 装成功并看到画面 |
 
 ## 已拍板（原待定三条，2026-11-15 14:30）
 
