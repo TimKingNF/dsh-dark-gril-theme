@@ -1,61 +1,114 @@
 # dsh-dark-gril-theme
 
-DeepSeek Harness 的暗色主题插件：左栏 + 对话区播放背景视频，右侧工作台自建不透明玻璃（竖向渐变 + 跨栏光源），接缝在视频一侧压暗收边。
+把 DeepSeek Harness 的会话状态变成背景视频：左侧栏与中间对话区播视频，右侧工作台保留自建磨砂玻璃，
+按 Agent 正在做什么切换片段。
 
-当前进度：**阶段二已实现**——host 侧 5 态状态机推 SSE，页面侧双 video 桶轮播（22 段全投用、整段播完才换、桶内不连续重复、acting 与底层交替）、剩余 1.2s 预加载、`dark`/`beautify` 双观感、调试浮窗。剩下的是真机安装与端到端验收。详见 [docs/status.md](docs/status.md)。
+![实机截图](docs/s1-real-gui.jpg)
 
-## 结构
+## 它做什么
 
-| 路径 | 作用 |
+- **按状态换片**：状态变化只在素材边界生效，片段完整播完才切，不打断正在播的画面。
+- **双 video 交叉淡入**：换片前 1.2s 把下一段预载进另一个 `<video>`，切换时只调不透明度。
+- **两档观感**：`dark` 走暗玻璃（侧栏压暗 0.48、对话区 0.54、光斑 0.25），`beautify` 全亮。
+- **设置页开关**：DSH 设置 →「Dark Gril 主题」，打光模式与调试浮窗两个开关。
+- **调试浮窗**：可拖动、可折叠，显示当前在听什么、在演哪段、下一段预载、桶进度与事件流水。
+
+## 状态与素材
+
+| 态 | 什么时候 | 桶 |
+| --- | --- | --- |
+| `idle` | 没有回合在跑 | 新会话：`idle` 单段；跑过回合：`idle` `done` `done-soft` `done-confirm` |
+| `thinking` | 回合在跑（含子 agent） | `thinking` + 12 段 `speaking-*`，共 13 段 |
+| `acting` | 工具连续执行 ≥3s | `acting` `listening` `listening-focus` `listening-nod` |
+| `approval` | 等审批，或等你回答问题 | `approval` + 同三段 `listening-*`（与 acting 共用） |
+| `done` | 回合刚结束的 12s 窗口 | `done` `done-soft` `done-confirm` |
+
+段数大于 1 的桶不会连抽同一段；单段桶只能重播，这是规则例外。
+
+## 安装
+
+需要 DSH `>=0.2.2-rc.2`（用到 `user-questions/request` 这个 waterfall）与 Node `>=22`。
+
+包还没发到 npm，当前从源码装：
+
+```bash
+git clone https://github.com/TimKingNF/dsh-dark-gril-theme.git
+cd ~/.dsh/profiles/web
+pnpm add link:/绝对路径/dsh-dark-gril-theme
+```
+
+然后把包名加进该 profile `package.json` 的 `dsh.profile.bundles` 数组，重启 DSH。
+
+包自带 `cordis.patch.yml`（一条 `insert`），loader 会按包名自动挂上，不用手写 patch 条目。
+只改 `runtime/` 与 `client.js` 刷新页面即可；改 `index.js` 或 `lib/` 必须重启进程。
+
+## 素材
+
+素材（22 段，127MB）不随包发，存在仓库的 `assets` 分支，自己下载：
+
+```bash
+git clone --branch assets --depth 1 https://github.com/TimKingNF/dsh-dark-gril-theme.git /tmp/dgt-assets
+mkdir -p ~/.dsh/dsh-dark-gril-theme/assets
+cp /tmp/dgt-assets/*.webm ~/.dsh/dsh-dark-gril-theme/assets/
+```
+
+插件优先读 `$DSH_HOME/dsh-dark-gril-theme/assets/`，目录不存在才回落到包内 `assets/`。
+放这里的好处是升级插件不会覆盖你的素材。
+
+文件名即桶里的键名，规格见 [assets/README.md](assets/README.md)。想用自己的素材，按同名替换即可，
+分辨率按 2560×1392 设计；缺段会被自动摘掉，整桶摘空就回落到 idle。
+
+## 配置
+
+真相源是 `$DSH_HOME/dsh-dark-gril-theme.json`（`DSH_HOME` 缺省为 `~/.dsh`）。
+设置页的两个开关写的就是这个文件，手改也生效（刷新页面）。
+
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `enabled` | `true` | 关掉后整层不注入，页面回原生外观 |
+| `asset` | `idle.webm` | 阶段一的固定素材，现在只作兜底 |
+| `sidebarDim` | `0.48` | 左侧栏压暗 |
+| `convDim` | `0.54` | 中间对话区压暗 |
+| `glow` | `1` | 光斑强度 |
+| `focusX` / `focusY` | `78` / `40` | 光斑位置（百分比） |
+| `beautify` | `false` | 打光模式开关 |
+| `debug` | `false` | 调试浮窗开关 |
+
+坏键、坏文件一律退化成默认值并 warn 一次，不会把 DSH 拉不起来。
+
+## 快捷键
+
+| 快捷键 | 作用 |
 | --- | --- |
-| `index.js` | 宿主半边：注入 `webserver/index-inject` 两行 + 注册配置/素材路由（Range/206） |
-| `cordis.patch.yml` | bundle patch 层，`id`/`name` 必须等于包名 |
-| `runtime/bg.css` / `runtime/bg.js` | 页面侧：背景层、玻璃、收边、跨栏光源、布局跟随 |
-| `lib/route.js` | Range 解析、MIME、路径白名单 |
-| `tests/host.test.mjs` | 宿主契约测试（注入行、200/206/416/HEAD/404、配置默认值） |
-| `tools/dev-server.mjs` | 3099 端口静态服务器，供不装插件直接联调 |
-| `tools/seam-check.mjs` | 零依赖 PNG 解码，测接缝跳变与光斑单调性 |
-| `docs/plan-state-video-bg.md` | 执行计划书（阶段划分、验收、回滚） |
-| `docs/status.md` | 进度总结（已完成 / 已定稿规格 / 限制 / 下一步） |
+| `Ctrl + Alt + M` | 在 dark / beautify 之间切换（与设置页开关同一份配置） |
+| `Ctrl + Alt + B` | 临时关掉整个背景层，不写配置，再按回来 |
 
-## 跑
+## 调试浮窗
 
-```bash
-node --test "tests/*.test.mjs"
-node --check runtime/bg.js
-```
+打开后常驻左下角，标题条可拖动（位置只记在本次会话），右上角 `−` / `+` 折叠。五张卡：
 
-不装插件联调：`node tools/dev-server.mjs` 起 3099，在任意页面控制台贴一行即可，配置与素材清单由服务器现算：
+- **状态源 · 在听什么**：SSE / 轮询、当前监听到的态、快照序号与时间、多久前到达、会话与底层态
+- **播放 · 在演什么**：片段名、对应态、播放进度、元素、剩余时间
+- **预载 · 下一段**：已预载的片段、它对应的态、在桶里的序号、是否就绪
+- **当前轮播桶**：整桶 chip，标出 ▶ 正在播与 ⏭ 预载目标
+- **最近变化**：最近 8 条事件流水
 
-```js
-const s=document.createElement('script');s.src='http://127.0.0.1:3099/inject.js';document.head.appendChild(s)
-```
+## 已知限制
 
-看两种观感（只改两个 CSS 变量，切换瞬时、素材无损）：
+- **后台标签页不解码视频**：浏览器会挂起媒体加载，Agent Window 里的预览常常停在 0 帧。这是浏览器行为，不是插件故障，前台窗口正常。
+- **素材不随包**：不下载素材也能装，但只有暗玻璃，没有视频。
+- **配置写接口只挡跨源**：`POST /dsh-dark-gril-theme/config.json` 会拒绝 Origin 与 Host 不一致的请求，本机其它进程仍可写——这是本地工具，不做鉴权。
+- **只在 web profile 验过**：`dsh.client.platform` 为 `web`，桌面端未测。
 
-```js
-__DGT_API__.toggleMode()   // 或按 Ctrl+Alt+M，选择记在 localStorage['dgt-mode']
-```
-
-`dark` 压侧栏 0.48 / 对话 0.54 保证文字对比度；`beautify` 全撤，恢复素材原本的肤色打光——代价是对话文字直接压在人物上。
-
-注入后逐态验收（`stateUrl` 为空时只能手动驱动）：
-
-```js
-for (const s of ['idle','thinking','speaking','acting','approval']) {
-  __DGT_API__.setState(s); await new Promise(r=>setTimeout(r,7000))
-}
-```
-
-## 装
+## 开发
 
 ```bash
-dsh plugin --profile web add "file:$PWD"
+npm test        # node --check 全部入口 + 42 例单测
+npm run pack:check
 ```
 
-## 关键约束（改代码前先看）
+进度、修订号与踩坑记录在 `docs/status.md`；素材路由与布局的调试起 `node tools/dev-server.mjs`。
 
-- 素材透明化覆盖 CSS token（`--dsw-alias-bg-base`、`--dsw-specific-sidebar-fill`），不能挂 class——CSS Modules 会哈希类名。
-- 视频层是 `position:fixed`，原点即视口，几何必须从 0 起算，不能拿布局框 `rect.left` 当起点。
-- 绝不用注入行的 `kind:'script-src'`，桌面壳上会打掉启动。
-- 强制深色主题（`body[data-ds-dark-theme]`）必须在 `disable()` 里还原。
+## 许可
+
+MIT

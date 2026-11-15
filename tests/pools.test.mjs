@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { ALL_ASSETS, POOLS, pickNext, poolFor, pruneToAssets } from '../lib/pools.js'
+import { ALL_ASSETS, POOLS, pickNext, poolFor, poolName, pruneToAssets } from '../lib/pools.js'
 
 test('22 段素材全部进了桶，没有遗漏也没有孤儿片', () => {
   assert.equal(ALL_ASSETS.length, 22)
@@ -45,6 +45,8 @@ test('idle 桶按「是否新会话」分叉：新会话单段，跑过回合后
 
 test('未知态回落到 idle 桶，不抛错', () => {
   assert.deepEqual([...poolFor('nonsense', {})], [...POOLS.idle])
+  assert.equal(poolName('nonsense', {}), 'idle', '未知态连桶名也回落')
+  assert.equal(poolName('idle', { isNewSession: true }), 'idleNew')
 })
 
 test('段数 > 1 的桶：任意上一段都不会被连抽', () => {

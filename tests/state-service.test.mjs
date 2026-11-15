@@ -26,6 +26,24 @@ test('回合在跑 → thinking；回合结束进 done', () => {
   assert.equal(service.snapshot().current.state, 'done')
 })
 
+test('快照自带桶名：还没跑过回合的 idle 走 idleNew，跑过之后走 idle', () => {
+  const { service, fire } = setup()
+  const agent = {}
+  fire('agent/status', { agent, status: 'idle' })
+  const snap = service.snapshot()
+  assert.equal(snap.current.state, 'idle')
+  assert.equal(snap.current.pool, 'idleNew', '没跑过回合 = 单段 idle')
+})
+
+test('快照自带桶名：回合刚结束的 done 用 done 桶', () => {
+  const { service, fire } = setup()
+  const agent = {}
+  fire('agent/status', { agent, status: 'running' })
+  fire('agent/status', { agent, status: 'idle' })
+  assert.equal(service.snapshot().current.state, 'done')
+  assert.equal(service.snapshot().current.pool, 'done')
+})
+
 test('提问未决 → approval，回答后回落到原判', async () => {
   const { service, fire } = setup()
   const agent = {}

@@ -20,7 +20,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { DEFAULTS, readConfig, writeConfig } from './lib/config.js'
-import { POOLS } from './lib/pools.js'
+import { POOLS, pickNext } from './lib/pools.js'
 import { contentTypeFor, parseRange, resolveInside, toInlineJson } from './lib/route.js'
 import { installStateService } from './lib/state-service.js'
 
@@ -89,14 +89,41 @@ function readRuntime(fileName) {
 }
 
 /**
- * 素材白名单：只发 assets 目录里真实存在的文件。
+ * 素材目录：优先 `$DSH_HOME/dsh-dark-gril-theme/assets`。
+ *
+ * 素材不随包发（127MB），用户从 GitHub 下载后放这里，升级插件不会覆盖；
+ * 目录不存在或一个视频都没有才回落到包内 assets/（本地开发时就是它）。
+ *
+ * @param {string} dshHome
+ * @returns {string}
+ */
+function resolveAssetDir(dshHome) {
+  const userDir = path.join(dshHome, 'dsh-dark-gril-theme', 'assets')
+  try {
+    if (readdirSync(userDir).some((name) => /\.(webm|mp4)$/iu.test(name))) return userDir
+  } catch {
+    /* 没这个目录是常态，不是错误 */
+  }
+  return ASSET_DIR
+}
+
+/** 目录 mtime 变了才重读，免得每个视频请求都扫一次盘。 */
+let assetCache = { dir: '', mtimeMs: -1, names: new Set() }
+
+/**
+ * 素材白名单：只发目录里真实存在的文件。
+ * @param {string} dir
  * @returns {Set<string>}
  */
-function assetNames() {
+function assetNames(dir) {
   try {
-    return new Set(readdirSync(ASSET_DIR))
+    const mtimeMs = statSync(dir).mtimeMs
+    if (assetCache.dir === dir && assetCache.mtimeMs === mtimeMs) return assetCache.names
+    const names = new Set(readdirSync(dir))
+    assetCache = { dir, mtimeMs, names }
+    return names
   } catch (error) {
-    warn(`读取 assets 失败：${String(error)}`)
+    warn(`读取素材目录失败：${String(error)}`)
     return new Set()
   }
 }
@@ -107,15 +134,16 @@ function assetNames() {
  * @param {import('node:http').IncomingMessage} req
  * @param {import('node:http').ServerResponse} res
  * @param {string} fileName
+ * @param {string} assetDir
  */
-function serveAsset(req, res, fileName) {
-  const allowed = assetNames()
+function serveAsset(req, res, fileName, assetDir) {
+  const allowed = assetNames(assetDir)
   if (!allowed.has(fileName)) {
     res.statusCode = 404
     res.end('not found')
     return
   }
-  const target = resolveInside(ASSET_DIR, fileName)
+  const target = resolveInside(assetDir, fileName)
   if (target === null) {
     res.statusCode = 403
     res.end('forbidden')
@@ -218,13 +246,36 @@ function readJsonBody(req) {
 }
 
 /**
+ * 挡掉别的网页打过来的写请求：带了 Origin 且 host 与本机请求不一致就拒。
+ * 本机其它进程仍可写——这是本地工具，不做鉴权。
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {boolean}
+ */
+function isSameOriginRequest(req) {
+  const origin = req.headers.origin
+  if (typeof origin !== 'string' || origin === '') return true
+  try {
+    return new URL(origin).host === req.headers.host
+  } catch {
+    return false
+  }
+}
+
+/**
  * 生成注入行。样式必须排在脚本之前（两种渲染器都按数组顺序应用，没有按 kind 排序）。
+ *
+ * 轮播规则以函数源码的形式一起注入：页面侧与宿主侧读的是同一个函数，
+ * 不会出现"两份规则、改一份忘另一份"。
  *
  * @param {{ clientConfig: Record<string, unknown>, cssText: string, jsText: string }} input
  * @returns {Array<Record<string, unknown>>}
  */
 function buildInjectionRows(input) {
-  const bootstrap = `globalThis.${BOOTSTRAP_GLOBAL}=${toInlineJson(input.clientConfig)};`
+  const bootstrap = [
+    `globalThis.${BOOTSTRAP_GLOBAL}=${toInlineJson(input.clientConfig)};`,
+    `globalThis.__DGT_RULES__={pickNext:${String(pickNext)}};`,
+  ].join('\n')
   return [
     { kind: 'style', text: input.cssText },
     { kind: 'script', placement: 'body', text: `${bootstrap}\n${input.jsText}` },
@@ -237,6 +288,7 @@ function buildInjectionRows(input) {
  */
 export function apply(ctx) {
   const dshHome = resolveDshHome()
+  const assetDir = resolveAssetDir(dshHome)
 
   // ── ① 状态机 ──
   // 事件驱动的部分先于路由挂上：路由只是把当前快照读出去。
@@ -249,7 +301,7 @@ export function apply(ctx) {
       const config = loadConfig(dshHome)
       if (config.enabled === false) return
       const asset = typeof config.asset === 'string' ? config.asset : DEFAULTS.asset
-      const available = [...assetNames()]
+      const available = [...assetNames(assetDir)]
       const clientConfig = {
         ...config,
         videoUrl: `${VIDEO_PREFIX}${encodeURIComponent(asset)}`,
@@ -289,6 +341,10 @@ export function apply(ctx) {
           path: CONFIG_ROUTE,
           handler: async (req, res) => {
             if (req.method === 'POST') {
+              if (!isSameOriginRequest(req)) {
+                sendJson(res, 403, { ok: false, error: 'cross-origin' })
+                return
+              }
               const patch = await readJsonBody(req)
               if (patch === undefined) {
                 sendJson(res, 400, { ok: false, error: 'bad-json' })
@@ -372,13 +428,13 @@ export function apply(ctx) {
         }),
       )
 
-      for (const fileName of assetNames()) {
+      for (const fileName of assetNames(assetDir)) {
         if (!/\.(webm|mp4|mov|webp|png|jpe?g)$/iu.test(fileName)) continue
         disposers.push(
           child.webServer.register({
             kind: 'exact',
             path: `${VIDEO_PREFIX}${encodeURIComponent(fileName)}`,
-            handler: (req, res) => serveAsset(req, res, fileName),
+            handler: (req, res) => serveAsset(req, res, fileName, assetDir),
           }),
         )
       }

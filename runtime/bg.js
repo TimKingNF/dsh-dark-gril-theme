@@ -158,26 +158,27 @@
     return out
   }
 
-  /** 桶内抽下一段：与 lib/pools.js 的 pickNext 同一规则，避开上一段。 */
+  // 轮播规则由宿主注入（唯一实现在 lib/pools.js），页面不再抄一份。
+  var RULES = globalThis.__DGT_RULES__ || {}
+
+  /** 桶内抽下一段；注入缺失时退化成纯随机，不会连续重复的保证丢了，但画面不会停。 */
   function pickIndex(pool, last) {
-    if (pool.length <= 1) return 0
-    if (!(last >= 0 && last < pool.length)) return Math.floor(Math.random() * pool.length)
-    return (last + 1 + Math.floor(Math.random() * (pool.length - 1))) % pool.length
+    if (typeof RULES.pickNext === 'function') return RULES.pickNext(pool, last)
+    return pool.length ? Math.floor(Math.random() * pool.length) : 0
   }
 
+  /**
+   * 取某个态该用的桶。桶名由宿主算好放进快照（current.pool），
+   * 页面只查表与回落，不再复刻 lib/pools.js 里 idleNew 的收窄规则。
+   */
   function poolForState(name) {
     var snap = latestSnapshot
-    var isNew = !(snap && snap.current && snap.current.isNew === false)
-    var wide = pools.idle || []
-    if (name === 'idle') {
-      var narrow = pools.idleNew || []
-      if (isNew && narrow.length) return narrow
-      return wide.length ? wide : narrow
-    }
-    var list = pools[name]
-    if (list && list.length) return list
+    var key = snap && snap.current && typeof snap.current.pool === 'string' ? snap.current.pool : name
+    var list = pools[key] || []
+    if (list.length) return list
     // 该态没有素材：回落到 idle 宽桶，画面不至于停住
-    return wide.length ? wide : pools.idleNew || []
+    if (pools.idle && pools.idle.length) return pools.idle
+    return pools.idleNew || []
   }
 
   function videoUrlFor(name) {

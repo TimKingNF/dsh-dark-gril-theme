@@ -1,8 +1,23 @@
 {
   "name": "dsh-dark-gril-theme",
-  "version": "0.1.0-s1",
-  "private": true,
-  "description": "按 DSH 会话状态切换的背景视频（阶段一：固定 idle 视频 + 主题材质，前两栏播放、右侧工作台自建磨砂玻璃）。",
+  "version": "0.1.0",
+  "description": "把 DSH 会话状态变成背景视频：五态轮播、dark/beautify 双模式、设置页开关与调试浮窗。",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "theme",
+    "background-video",
+    "dark-theme"
+  ],
+  "homepage": "https://github.com/TimKingNF/dsh-dark-gril-theme#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TimKingNF/dsh-dark-gril-theme.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TimKingNF/dsh-dark-gril-theme/issues"
+  },
+  "author": "Tim (https://github.com/TimKingNF)",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -15,13 +30,19 @@
     "client.js",
     "lib",
     "runtime",
-    "assets",
+    "assets/README.md",
     "cordis.patch.yml"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "dsh": ">=0.2.2-rc.2 <0.3.0-0"
   },
-  "license": "UNLICENSED",
+  "scripts": {
+    "check": "node --check index.js && node --check client.js && node --check lib/config.js && node --check lib/machine.js && node --check lib/pools.js && node --check lib/route.js && node --check lib/state-service.js && node --check runtime/bg.js",
+    "test": "npm run check && node --test \"tests/*.test.mjs\"",
+    "pack:check": "npm pack --dry-run"
+  },
+  "license": "MIT",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

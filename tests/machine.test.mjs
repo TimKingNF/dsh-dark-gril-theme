@@ -3,13 +3,6 @@ import test from 'node:test'
 
 import { ACTING_MIN_MS, DONE_HOLD_MS, STATES, createMachine } from '../lib/machine.js'
 
-/** 造一串 chunk。 */
-function chunks(n, type = 'text-delta') {
-  const out = []
-  for (let i = 0; i < n; i += 1) out.push({ type, index: 0, text: 'x' })
-  return out
-}
-
 test('初始态是 idle，且 seq 从 0 起', () => {
   const m = createMachine()
   assert.equal(m.state, 'idle')
@@ -21,22 +14,22 @@ test('态词表 5 个：speaking 退休，done 回来', () => {
   assert.ok(!STATES.includes('speaking'))
 })
 
-test('正文 chunk 与推理 chunk 一样都算 thinking', () => {
+test('输出流开着就是 thinking，与 chunk 类型无关', () => {
   const m = createMachine()
   m.setRunning(true, 0)
   assert.equal(m.state, 'thinking')
-  for (const chunk of chunks(1, 'reasoning-delta')) m.feedChunk(chunk, 10)
+  m.streamStart(10)
   assert.equal(m.state, 'thinking')
-  for (const chunk of chunks(1, 'text-delta')) m.feedChunk(chunk, 20)
-  assert.equal(m.state, 'thinking')
+  m.streamEnd(20)
+  assert.equal(m.state, 'thinking', '回合没结束就还是 thinking')
 })
 
-test('正文流再长也不会切出第二个态', () => {
+test('回合持续 tick 也不会切出第二个态', () => {
   const m = createMachine()
   m.setRunning(true, 0)
   const seen = new Set()
   for (let i = 0; i < 40; i += 1) {
-    m.feedChunk({ type: 'text-delta', index: 0, text: 'x' }, 100 + i * 50)
+    m.tick(100 + i * 50)
     seen.add(m.state)
   }
   assert.deepEqual([...seen], ['thinking'])
@@ -94,8 +87,8 @@ test('approval 压过一切，决定后回到原来的判定', () => {
 
   m.setApproval(true, ACTING_MIN_MS + 10)
   assert.equal(m.state, 'approval')
-  for (const chunk of chunks(20)) m.feedChunk(chunk, 100)
-  assert.equal(m.state, 'approval')
+  m.tick(ACTING_MIN_MS + 15)
+  assert.equal(m.state, 'approval', '节拍不会把 approval 顶掉')
 
   m.setApproval(false, ACTING_MIN_MS + 20)
   assert.equal(m.state, 'acting')
@@ -122,7 +115,7 @@ test('流断掉之后回 thinking，回合没结束就不落 idle', () => {
   const m = createMachine()
   m.setRunning(true, 0)
   m.streamStart(1)
-  for (const chunk of chunks(20)) m.feedChunk(chunk, 2)
+  m.tick(40)
   assert.equal(m.state, 'thinking')
   m.streamEnd(50)
   assert.equal(m.state, 'thinking', '回合还没完，回 thinking')
@@ -130,10 +123,10 @@ test('流断掉之后回 thinking，回合没结束就不落 idle', () => {
   assert.equal(m.state, 'done')
 })
 
-test('tool-call-delta 不改变判定', () => {
+test('机器不再有 chunk 入口：信号只走 start / end / tick', () => {
   const m = createMachine()
+  assert.equal(typeof m.feedChunk, 'undefined')
   m.setRunning(true, 0)
-  m.feedChunk({ type: 'tool-call-delta', index: 1, id: 'c1', argumentsDelta: '{' }, 30)
   assert.equal(m.state, 'thinking')
 })
 
