@@ -101,13 +101,13 @@ cp /tmp/dgt-assets/*.webm ~/.dsh/dsh-dark-gril-theme/assets/
 
 - **后台标签页不解码视频**：浏览器会挂起媒体加载，Agent Window 里的预览常常停在 0 帧。这是浏览器行为，不是插件故障，前台窗口正常。
 - **素材不随包**：不下载素材也能装，但只有暗玻璃，没有视频。
-- **配置写接口只挡跨源**：`POST /dsh-dark-gril-theme/config.json` 会拒绝 Origin 与 Host 不一致的请求，本机其它进程仍可写——这是本地工具，不做鉴权。
+- **配置写接口只挡网页跨站**：`POST /dsh-dark-gril-theme/config.json` 只接受 `application/json` 正文，并拒绝 Origin 与 Host 不一致的请求；本机其它进程仍可写——这是本地工具，不做鉴权。
 - **只在 web profile 验过**：`dsh.client.platform` 为 `web`，桌面端未测。
 
 ## 开发
 
 ```bash
-npm test        # node --check 全部入口 + 42 例单测
+npm test        # node --check 全部入口 + 49 例单测
 npm run pack:check
 ```
 

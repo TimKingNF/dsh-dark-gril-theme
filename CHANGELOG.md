@@ -21,4 +21,4 @@
 - 轮播规则只留 `lib/pools.js` 一份：`pickNext` 以函数源码注入页面，桶名由宿主算进快照。
 - 删掉 `machine.feedChunk` 死接口，`agent/assistant-stream` 的 chunk 帧不再参与判定。
 - 素材白名单按目录 mtime 缓存，不再每个视频请求扫一次盘。
-- 配置写接口拒绝跨源请求（Origin 与 Host 不一致回 403）。
+- 配置写接口补两道门：只收 `application/json` 正文，且 Origin 与 Host 不一致回 403。

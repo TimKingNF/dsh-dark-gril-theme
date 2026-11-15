@@ -1,6 +1,6 @@
 # 进度总结
 
-> 快照：2026-11-15 16:25（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #14（整理审查项 + 发布准备：素材外置、规则注入、跨源写保护）
+> 快照：2026-11-15 16:45（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #15（写配置第二道门：GUI 中继会吞 Origin，改以 application/json 为主判据）
 
 ## 一句话状态
 
@@ -40,11 +40,11 @@
 | S3 配置页快捷键说明 | 完成 | `client.js` 的 `Shortcuts` 段：`Ctrl+Alt+M` / `Ctrl+Alt+B` / 拖动与折叠三条，kbd 方块 + 说明文字 |
 | S4 素材目录外置 | 完成 | `index.js` `resolveAssetDir()`：`$DSH_HOME/dsh-dark-gril-theme/assets/` 里至少一段视频就整目录接管，否则回落包内 `assets/`；`tests/assets-dir.test.mjs` 4 例 |
 | S4 轮播规则单一真相 | 完成 | `lib/pools.js` 的 `pickNext` 源码经 `__DGT_RULES__` 注入页面，`runtime/bg.js` 删掉自己那份 `pickIndex` / `poolForState` 复刻；`state-service.js` 快照直接带 `pool` 名 |
-| S4 配置写入跨源保护 | 完成 | `index.js` `isSameOriginRequest()`：POST 的 `Origin` 与 `Host` 不一致回 403 `cross-origin`；无 `Origin` 的本地请求放行；`tests/assets-dir.test.mjs` 2 例 |
+| S4 配置写入两道门 | 完成 | `index.js`：`isSameOriginRequest()`（`Origin` 与 `Host` 不一致回 403 `cross-origin`）+ `isJsonWrite()`（非 `application/json` 回 403 `not-json-write`）；`tests/assets-dir.test.mjs` 2 例 + `tests/host.test.mjs` 1 例 |
 | S4 发布准备 | 完成 | `package.json` 元数据（MIT、keywords、engines、repository、files 去掉素材）、`LICENSE`、`CHANGELOG.md`、`README.md` 重写、`npm test` / `npm run pack:check`；`npm pack` 14 文件 / 44KB，无 webm |
 | S4 GitHub 托管 | 完成 | `main` = `5c2fbca`（代码，不含素材）；`assets` 分支 = `38f64cd`（22 段 webm + 规格表）；`git clone --branch assets` 实测 22 段到位 |
 
-测试：`node --test "tests/*.test.mjs"` → 48/48（host 3 + machine 14 + pools 12 + state-service 6 + config 7 + assets-dir 6）；`node --check index.js client.js lib/*.js runtime/bg.js` 通过。
+测试：`node --test "tests/*.test.mjs"` → 49/49（host 4 + machine 14 + pools 12 + state-service 6 + config 7 + assets-dir 6）；`node --check index.js client.js lib/*.js runtime/bg.js` 通过。
 
 
 ## S3 配置层（修订 #7）
@@ -197,6 +197,12 @@
 > ⑤ 发布物：`private` 去掉、版本 `0.1.0-s1` → `0.1.0`、`UNLICENSED` → `MIT`、补 `repository` / `homepage` / `bugs` / `keywords` / `engines`（`node >=22`、`dsh >=0.2.2-rc.2 <0.3.0-0`）、`files` 不再收素材、加 `scripts.check` / `test` / `pack:check`；新增 `LICENSE`、`CHANGELOG.md`，`README.md` 与 `assets/README.md` 按当前行为重写。
 > ⑥ 素材外置：22 段 127MB 推到 `assets` 分支，用户 `git clone --branch assets` 后放进 `$DSH_HOME/dsh-dark-gril-theme/assets/`。实测 clone 得 22 段、`npm pack` 只有 14 个文件 44KB。
 > ⑦ 验证：`npm test` 48/48（新增 `tests/assets-dir.test.mjs` 6 例）；`npm run check` 八个入口 `node --check` 全过；`git push` 后远端 `main` = `5c2fbca`、`assets` = `38f64cd`。
+> 修订 #15 · 2026-11-15 16:31。修 #14 留下的一个「看起来做了、实际没生效」的问题。
+> ① 现象：重启后按 #14 验跨源写保护，向配置接口带 Origin: http://evil.example 的 POST 仍回 200。
+> ② 定位：同一请求打 3080（宿主 webServer 的 loopback 绑定）回 403，打 3082（GUI 用的端口）回 200；两个端口不是同一个监听。3082 前面有一层中继，转发时把 Origin 头吞掉了，于是 isSameOriginRequest() 走「无 Origin 放行」分支。代码本身没错，判据在真实浏览器路径上不成立。
+> ③ 改法：加第二道门 isJsonWrite(req) —— 写请求必须是 application/json 正文，否则 403 not-json-write。跨站 form 只能发 text/plain、urlencoded、multipart，发不出 JSON；跨站 fetch 发 JSON 必须先过预检，而本服务不返回任何 CORS 头，预检必然失败。这道门不依赖中继是否转发某个头。
+> ④ 验证：本地起临时服务（DSH_HOME 指到临时目录）实测 text/plain → 403、urlencoded → 403、带 Origin: evil 的 JSON → 403、无 Origin 的 JSON → 200 且文件真的写成。重启宿主后在同一条 GUI 链路上复测：text/plain → 403，JSON → 200。
+> ⑤ 教训：跨源保护要按「请求能不能被跨站构造出来」设计，别只看请求头；本机能直连后端端口时，前端端口上看到的头集合不等于后端看到的。
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
 **状态源**：`agent/assistant-stream` + `tools/execute` + `approval/request`（waterfall，必须 `return next()`）+ `agent/status` / `uiSession.sessionStatus`（兜底纠偏）。
@@ -220,7 +226,7 @@
 5. **右栏那道 1px 白边靠 DOM 现状抹除**：它来自宿主面板的 `border-left: 0.666667px rgba(255,255,255,0.2)`（DPR 1.5 下正好一个设备像素、+23 亮度）。`clearEdgeBorder()` 每次布局按坐标重扫并置 0，宿主若改用它法画边（box-shadow / 伪元素 / 背景图），这里要跟着改。
 6. **host→SSE→client 没端到端跑过**：主机侧状态机、SSE 路由、client 消费三段各自验过（单测 / dev server `/config.json`+`/inject.js` / 页面里 `setState()` 假快照），但没有一次真实的 Agent 回合经 SSE 推过来驱动换态。装插件后第一件事就是跑这个。
 7. **`beautify` 下长文可读性未人眼判**：对话列零遮罩，文字直接压在人物上，只有用户主观能定。
-8. **配置写接口只挡跨源，不做鉴权**：`POST /dsh-dark-gril-theme/config.json` 会拒绝 `Origin` 与 `Host` 不一致的请求，本机其它进程仍可改配置。把它当本地工具看待，别当服务暴露到公网。
+8. **配置写接口只挡网页跨站，不做鉴权**：两道门——非 `application/json` 正文回 403、`Origin` 与 `Host` 不一致回 403。**GUI 端口（3082）前面的中继会吞掉 `Origin`**，所以真实生效的是 JSON 那道门；本机其它进程（curl 等）仍可改配置。把它当本地工具看待，别当服务暴露到公网。
 9. **素材要自己下**：包内只有 `assets/README.md`，没视频时插件仍装得上，但只有暗玻璃没画面。素材在仓库 `assets` 分支（`38f64cd`，22 段 127MB），下载方式见 `README.md`。
 10. **包装进干净环境没验过**：`dsh plugin add` 在本机沙箱恒失败（见限制 1），安装步骤仍以 `pnpm link` 为准；`npm pack` 产物只验了文件清单与体积，没有在全新 profile 里装一遍。
 
@@ -244,6 +250,9 @@
 | `3e3ac2b` | 修订 #12：idle 分新会话/跑过回合两种池，done 窗口 6s → 12s |
 | `3948290` | 修订 #13：配置页补快捷键与调试浮窗操作说明 |
 | `5c2fbca` | 修订 #14：整理审查项并准备发布（素材外置、规则注入单一真相、跨源写保护、包元数据与文档） |
+| `51b50f6` | 修订 #14：素材目录外置解析、轮播规则注入、跨源写保护、发布物与文档齐备 |
+| `e2a8af5` | docs：README 换双模式宣传图，清掉 s1 过程截图 |
+| `7523614` | 修订 #15：写配置补 `application/json` 门（GUI 中继会吞 Origin） |
 
 ## 下一步
 
