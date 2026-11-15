@@ -17,8 +17,17 @@ import { apply, ASSET_DIR, CONFIG_ROUTE, VIDEO_PREFIX, BOOTSTRAP_GLOBAL } from '
 function fakeContext() {
   const events = new EventEmitter()
   const routes = new Map()
+  const disposers = []
   const ctx = {
-    on: (name, handler) => events.on(name, handler),
+    on: (name, handler) => {
+      events.on(name, handler)
+      return () => events.off(name, handler)
+    },
+    // Cordis 的 effect：工厂返回清理函数，插件卸载时调用。
+    effect: (factory) => {
+      const dispose = factory()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    },
     inject: (_names, fn) => {
       const child = {
         effect: (factory) => {
@@ -34,7 +43,7 @@ function fakeContext() {
       fn(child)
     },
   }
-  return { ctx, events, routes }
+  return { ctx, events, routes, disposers }
 }
 
 /** 触发一次注入表收集。 */

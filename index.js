@@ -19,7 +19,9 @@ import { createReadStream, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { POOLS } from './lib/pools.js'
 import { contentTypeFor, parseRange, resolveInside, toInlineJson } from './lib/route.js'
+import { installStateService } from './lib/state-service.js'
 
 /** Cordis 诊断用的插件名。 */
 export const name = 'dark-gril-theme'
@@ -37,6 +39,10 @@ export const ROUTE_PREFIX = '/dsh-dark-gril-theme'
 export const CONFIG_ROUTE = `${ROUTE_PREFIX}/config.json`
 /** 素材前缀。 */
 export const VIDEO_PREFIX = `${ROUTE_PREFIX}/videos/`
+/** 状态推送（SSE，`text/event-stream`）。 */
+export const STATE_ROUTE = `${ROUTE_PREFIX}/state`
+/** 状态快照（JSON，SSE 断掉时页面降级轮询它）。 */
+export const STATE_JSON_ROUTE = `${ROUTE_PREFIX}/state.json`
 /** 页面侧读取配置用的全局名。 */
 export const BOOTSTRAP_GLOBAL = '__DSH_STATE_VIDEO_BG__'
 
@@ -212,16 +218,27 @@ function buildInjectionRows(input) {
 export function apply(ctx) {
   const dshHome = resolveDshHome()
 
-  // ── ① 注入行 ──
+  // ── ① 状态机 ──
+  // 事件驱动的部分先于路由挂上：路由只是把当前快照读出去。
+  const stateService = installStateService(ctx, { warn })
+
+  // ── ② 注入行 ──
   ctx.on('webserver/index-inject', (table) => {
     if (!Array.isArray(table)) return
     try {
       const config = loadConfig(dshHome)
       if (config.enabled === false) return
       const asset = typeof config.asset === 'string' ? config.asset : DEFAULTS.asset
+      const available = [...assetNames()]
       const clientConfig = {
         ...config,
         videoUrl: `${VIDEO_PREFIX}${encodeURIComponent(asset)}`,
+        // 桶映射只有一份真相（lib/pools.js），页面侧不再自带素材名单。
+        pools: POOLS,
+        available,
+        videoPrefix: VIDEO_PREFIX,
+        stateUrl: STATE_ROUTE,
+        stateJsonUrl: STATE_JSON_ROUTE,
       }
       const rows = buildInjectionRows({
         clientConfig,
@@ -238,7 +255,7 @@ export function apply(ctx) {
     }
   })
 
-  // ── ② 路由 ──
+  // ── ③ 路由 ──
   ctx.inject(['webServer'], (child) => {
     child.effect(() => {
       /** @type {Array<() => void>} */
@@ -254,6 +271,66 @@ export function apply(ctx) {
             res.setHeader('Content-Type', 'application/json; charset=utf-8')
             res.setHeader('Cache-Control', 'no-store')
             res.end(JSON.stringify(config))
+          },
+        }),
+      )
+
+      // 状态：JSON 快照（轮询傅底）与 SSE 长连接（首选）。
+      disposers.push(
+        child.webServer.register({
+          kind: 'exact',
+          path: STATE_JSON_ROUTE,
+          handler: (req, res) => {
+            res.statusCode = 200
+            res.setHeader('Content-Type', 'application/json; charset=utf-8')
+            res.setHeader('Cache-Control', 'no-store')
+            res.end(JSON.stringify(stateService.snapshot()))
+          },
+        }),
+      )
+
+      disposers.push(
+        child.webServer.register({
+          kind: 'exact',
+          path: STATE_ROUTE,
+          handler: (req, res) => {
+            res.statusCode = 200
+            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+            res.setHeader('Cache-Control', 'no-store')
+            res.setHeader('Connection', 'keep-alive')
+            res.setHeader('X-Accel-Buffering', 'no')
+            if (typeof res.flushHeaders === 'function') res.flushHeaders()
+
+            /** @param {object} snapshot */
+            const send = (snapshot) => {
+              try {
+                res.write(`data: ${JSON.stringify(snapshot)}\n\n`)
+              } catch {
+                /* 页面已关，close 事件会收拾 */
+              }
+            }
+
+            res.write('retry: 2000\n\n')
+            send(stateService.snapshot())
+            const off = stateService.subscribe(send)
+            const heartbeat = setInterval(() => {
+              try {
+                res.write(': ping\n\n')
+              } catch {
+                /* 同上 */
+              }
+            }, 25000)
+            if (typeof heartbeat.unref === 'function') heartbeat.unref()
+
+            let closed = false
+            const cleanup = () => {
+              if (closed) return
+              closed = true
+              clearInterval(heartbeat)
+              off()
+            }
+            req.on('close', cleanup)
+            res.on('close', cleanup)
           },
         }),
       )

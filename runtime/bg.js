@@ -21,14 +21,43 @@
   if (!CONFIG || typeof CONFIG !== 'object') CONFIG = {}
 
   var HTML_ATTR = 'data-svb'
-  /** 接缝收边带宽度：整条叠在视频上，一个像素都不进右栏。 */
-  var SEAM_WIDTH = 220
-  /** 光源往接缝左侧伸出的距离：灯要跨过接缝，落在视频右下角。 */
-  var GLOW_LEAD = 200
+  /** 接缝收边带宽度：只做 32px 的软接边。再宽（原 220px）就成了画面里一条可辨的暗带。 */
+  var SEAM_WIDTH = 32
+  /** 光源左缘与收边带对齐：灯停在右区里，不越过接缝探进视频。 */
+  var GLOW_LEAD = 32
   var body = null
   var host = null
   var frame = null
+  /** 双 video 交叉淡入：每次换的是另一个元素，currentTime 永远不 seek。 */
+  var videos = []
+  var videoIndex = 0
+  /** 当前在播的元素，布局与卸载代码沿用这个名字。 */
   var video = null
+  /** 当前在播的素材名、它所属的桶、它在桶里的下标（不连续重复要用）。 */
+  var currentClip = ''
+  var currentPool = null
+  var currentIndex = -1
+  /** 当前这一段是替哪个态播的（acting 与底层态交替时要用）。 */
+  var currentChosenState = ''
+  /** acting 下面那一层：acting 播完先回它，再考虑下一段 acting。 */
+  var underlyingState = 'idle'
+  /** 最近一次收到的状态快照；边界那一刻以它为准，不做队列。 */
+  var latestSnapshot = null
+  /** 宿主注入的素材桶。 */
+  var pools = {}
+  var stateSource = null
+  var pollTimer = null
+  var sseErrors = 0
+  /** 每次换片自增，用来丢弃迟到的 canplay 回调。 */
+  var boundaryToken = 0
+  /** 预加载的那一手：边界时刻如果还是这个态，直接用它，不再重新抽。 */
+  var warmPlan = null
+  /** 调试浮窗；只有 CONFIG.debug 为真才建。 */
+  var debugEl = null
+  var debugText = null
+  var debugTimer = null
+  /** 状态来自哪：sse / poll / manual，排障时要看这个。 */
+  var sourceKind = 'manual'
   var scrimSide = null
   var scrimConv = null
   var sheet = null
@@ -77,41 +106,331 @@
     return nums
   }
 
+  // ── 素材桶与轮播 ────────────────────────────────────────────
+
+  /** 按"素材真实存在"过滤宿主注入的桶；缺段摘掉，整桶摘空就回落。 */
+  function normalizePools() {
+    var source = CONFIG.pools && typeof CONFIG.pools === 'object' ? CONFIG.pools : {}
+    var have =
+      Object.prototype.toString.call(CONFIG.available) === '[object Array]'
+        ? new Set(CONFIG.available)
+        : null
+    var out = {}
+    Object.keys(source).forEach(function (key) {
+      var list = source[key]
+      if (Object.prototype.toString.call(list) !== '[object Array]') return
+      out[key] = list.filter(function (name) {
+        return have === null || have.has(name)
+      })
+    })
+    return out
+  }
+
+  /** 桶内抽下一段：与 lib/pools.js 的 pickNext 同一规则，避开上一段。 */
+  function pickIndex(pool, last) {
+    if (pool.length <= 1) return 0
+    if (!(last >= 0 && last < pool.length)) return Math.floor(Math.random() * pool.length)
+    return (last + 1 + Math.floor(Math.random() * (pool.length - 1))) % pool.length
+  }
+
+  function poolForState(name) {
+    var snap = latestSnapshot
+    var isNew = !(snap && snap.current && snap.current.isNew === false)
+    var wide = pools.idle || []
+    if (name === 'idle') {
+      var narrow = pools.idleNew || []
+      if (isNew && narrow.length) return narrow
+      return wide.length ? wide : narrow
+    }
+    var list = pools[name]
+    if (list && list.length) return list
+    // 该态没有素材：回落到 idle 宽桶，画面不至于停住
+    return wide.length ? wide : pools.idleNew || []
+  }
+
+  function videoUrlFor(name) {
+    var prefix = typeof CONFIG.videoPrefix === 'string' ? CONFIG.videoPrefix : ''
+    return prefix + encodeURIComponent(name)
+  }
+
+  /** 只看快照得出"该演哪个态"，不做随机抽取，可以在边界前重复调用。 */
+  function planState() {
+    var snap = latestSnapshot
+    var target =
+      snap && snap.current && typeof snap.current.state === 'string' ? snap.current.state : 'idle'
+    // acting 与它下面那一层交替：上一段已经是 acting，就先回底层一段。
+    if (target === 'acting' && currentChosenState === 'acting' && underlyingState !== 'acting') {
+      return underlyingState
+    }
+    return target
+  }
+
+  /** 边界时刻读最新快照，决定下一段播什么（会抽一次随机）。 */
+  function decideNext() {
+    var target = planState()
+    var pool = poolForState(target)
+    if (!pool.length) return null
+    var last = pool === currentPool ? currentIndex : -1
+    var idx = pickIndex(pool, last)
+    return { state: target, pool: pool, index: idx, clip: pool[idx] }
+  }
+
+  /** 把下一段先装进另一个 video 元素，但不播。 */
+  function warmNextClip() {
+    if (videos.length < 2) return
+    var target = planState()
+    if (warmPlan && warmPlan.state === target) return
+    var plan = decideNext()
+    if (!plan) return
+    var el = videos[(videoIndex + 1) % videos.length]
+    warmPlan = plan
+    if (el.dataset.clip === plan.clip && el.readyState >= 2) return
+    el.dataset.clip = plan.clip
+    el.src = videoUrlFor(plan.clip)
+    try {
+      el.load()
+    } catch (error) {
+      /* 忽略 */
+    }
+  }
+
+  /** 边界时取下一段：预载用得上就用预载，态变了就现抽。 */
+  function takeNext() {
+    var target = planState()
+    var plan = warmPlan && warmPlan.state === target ? warmPlan : decideNext()
+    warmPlan = null
+    return plan
+  }
+
+  function makeVideoElement(id) {
+    var el = document.createElement('video')
+    el.id = id
+    el.className = 'svb-video'
+    el.muted = true
+    el.defaultMuted = true
+    el.playsInline = true
+    el.preload = 'auto'
+    // 不设 loop：轮播要靠 ended 这个边界事件，loop 永远不给。
+    el.setAttribute('muted', '')
+    el.setAttribute('playsinline', '')
+    el.setAttribute('aria-hidden', 'true')
+    el.addEventListener('loadedmetadata', function () {
+      schedule()
+    })
+    el.addEventListener('timeupdate', function () {
+      if (el !== video) return
+      var total = el.duration
+      if (!isFinite(total) || total <= 0) return
+      // 提前预载下一段：到边界时元素已经 readyState>=2，换片就不用等解码。
+      // 1.2s 留量：本机 canplay 约 0.2s，慢盘/慢网约 0.6–1.0s。
+      if (total - el.currentTime <= 1.2) warmNextClip()
+    })
+    el.addEventListener('ended', function () {
+      if (el !== video) return
+      playClip(takeNext())
+    })
+    el.addEventListener('error', function () {
+      warn('素材加载失败：' + String(el.dataset.clip || el.src))
+    })
+    return el
+  }
+
+  /** 播一段：换到另一个 video 元素，canplay 之后才替换，接缝才不黑。 */
+  function playClip(decision) {
+    if (!decision || videos.length === 0) return
+    var token = (boundaryToken += 1)
+    var nextIndex = (videoIndex + 1) % videos.length
+    var incoming = videos[nextIndex]
+    var outgoing = videos[videoIndex]
+
+    function commit() {
+      if (token !== boundaryToken) return
+      try {
+        incoming.currentTime = 0
+      } catch (error) {
+        /* 元数据没就绪时忽略，反正它就是 0 */
+      }
+      var played = incoming.play()
+      if (played && typeof played.catch === 'function') {
+        played.catch(function (error) {
+          warn('素材未能自动播放：' + String(error))
+        })
+      }
+      incoming.setAttribute('data-shown', '1')
+      if (outgoing && outgoing !== incoming) outgoing.removeAttribute('data-shown')
+      videoIndex = nextIndex
+      video = incoming
+      currentClip = decision.clip
+      currentPool = decision.pool
+      currentIndex = decision.index
+      currentChosenState = decision.state
+      if (decision.state !== 'acting') underlyingState = decision.state
+      state = decision.state
+      schedule()
+      // 淡出跑完（400ms）再把旧元素停掉：停早了会截掉最后几帧。
+      setTimeout(function () {
+        if (token !== boundaryToken) return
+        try {
+          outgoing.pause()
+        } catch (error) {
+          /* 忽略 */
+        }
+      }, 460)
+    }
+
+    if (incoming.dataset.clip === decision.clip && incoming.readyState >= 2) {
+      commit()
+      return
+    }
+    incoming.dataset.clip = decision.clip
+    incoming.addEventListener('canplay', commit, { once: true })
+    incoming.src = videoUrlFor(decision.clip)
+    try {
+      incoming.load()
+    } catch (error) {
+      /* 忽略 */
+    }
+  }
+
+  /** approval 要硬切：等人时不该还在演上一段。 */
+  function maybeHardCut() {
+    var snap = latestSnapshot
+    if (!snap || !snap.current) return
+    if (snap.current.state !== 'approval') return
+    if (currentChosenState === 'approval') return
+    playClip(decideNext())
+  }
+
+  function applySnapshot(snap) {
+    if (!snap || typeof snap !== 'object') return
+    latestSnapshot = snap
+    var name = snap.current && typeof snap.current.state === 'string' ? snap.current.state : 'idle'
+    state = name
+    maybeHardCut()
+  }
+
+  /** 状态源：SSE 优先，连续失败 3 次降级成 1s 轮询。 */
+  function startStateStream() {
+    var url = typeof CONFIG.stateUrl === 'string' ? CONFIG.stateUrl : ''
+    if (url === '' || typeof EventSource === 'undefined') {
+      startPolling()
+      return
+    }
+    try {
+      stateSource = new EventSource(url)
+      sourceKind = 'sse'
+    } catch (error) {
+      warn('状态推送不可用，改用轮询：' + String(error))
+      startPolling()
+      return
+    }
+    stateSource.onmessage = function (event) {
+      sseErrors = 0
+      try {
+        applySnapshot(JSON.parse(event.data))
+      } catch (error) {
+        warn('状态消息解析失败：' + String(error))
+      }
+    }
+    stateSource.onerror = function () {
+      sseErrors += 1
+      if (sseErrors < 3) return
+      warn('状态推送连续失败，改用轮询')
+      stopStateStream()
+      startPolling()
+    }
+  }
+
+  function startPolling() {
+    if (pollTimer !== null) return
+    sourceKind = 'poll'
+    var url = typeof CONFIG.stateJsonUrl === 'string' ? CONFIG.stateJsonUrl : ''
+    if (url === '') return
+    function pull() {
+      fetch(url, { cache: 'no-store' })
+        .then(function (res) {
+          return res.json()
+        })
+        .then(applySnapshot)
+        .catch(function (error) {
+          warn('状态轮询失败：' + String(error))
+        })
+    }
+    pull()
+    pollTimer = setInterval(pull, 1000)
+  }
+
+  function stopStateStream() {
+    if (stateSource) {
+      try {
+        stateSource.close()
+      } catch (error) {
+        /* 忽略 */
+      }
+      stateSource = null
+    }
+    if (pollTimer !== null) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
+  }
+
+  // ── 调试浮窗 ────────────────────────────────────────
+
+  function startDebug() {
+    if (!CONFIG.debug || debugEl) return
+    debugEl = document.createElement('div')
+    debugEl.id = 'svb-debug'
+    debugText = document.createElement('pre')
+    debugEl.appendChild(debugText)
+    document.body.appendChild(debugEl)
+    debugTimer = setInterval(renderDebug, 250)
+    renderDebug()
+  }
+
+  function stopDebug() {
+    if (debugTimer !== null) {
+      clearInterval(debugTimer)
+      debugTimer = null
+    }
+    if (debugEl) {
+      debugEl.remove()
+      debugEl = null
+      debugText = null
+    }
+  }
+
+  function renderDebug() {
+    if (!debugText) return
+    var el = video
+    var total = el && isFinite(el.duration) ? el.duration.toFixed(2) : '0'
+    var at = el ? el.currentTime.toFixed(2) : '0'
+    var snap = latestSnapshot
+    var seq = snap && typeof snap.seq === 'number' ? snap.seq : '-'
+    var isNew = snap && snap.current ? String(snap.current.isNew) : '-'
+    var agents = snap && snap.agents ? snap.agents.length : 0
+    debugText.textContent =
+      '快照态 ' + state + ' · 正在演 ' + (currentChosenState || '—') +
+      '\n播 ' + (currentClip || '—') + ' · ' + at + '/' + total +
+      ' · 桶 ' + (currentPool ? currentPool.length : 0) + '#' + currentIndex +
+      '\n底层 ' + underlyingState + ' · 预载 ' + (warmPlan ? warmPlan.clip : '—') +
+      ' · 源 ' + sourceKind +
+      '\n快照 seq' + seq + ' · isNew ' + isNew + ' · 会话 ' + agents
+  }
+
   function buildHost() {
     if (host) return
 
     var stage = document.createElement('div')
     stage.id = 'svb-stage'
 
-    video = document.createElement('video')
-    video.id = 'svb-video'
-    video.autoplay = true
-    video.loop = true
-    video.muted = true
-    video.playsInline = true
-    video.preload = 'auto'
-    video.setAttribute('muted', '')
-    video.setAttribute('playsinline', '')
-    video.setAttribute('aria-hidden', 'true')
-    if (typeof CONFIG.videoUrl === 'string' && CONFIG.videoUrl !== '') {
-      video.src = CONFIG.videoUrl
+    pools = normalizePools()
+    for (var slot = 0; slot < 2; slot += 1) {
+      var el = makeVideoElement('svb-video-' + (slot === 0 ? 'a' : 'b'))
+      videos.push(el)
+      stage.appendChild(el)
     }
-    video.addEventListener('loadedmetadata', function () {
-      schedule()
-    })
-    video.addEventListener('loadeddata', function () {
-      video.setAttribute('data-shown', '1')
-      var played = video.play()
-      if (played && typeof played.catch === 'function') {
-        played.catch(function (error) {
-          warn('视频未能自动播放：' + String(error))
-        })
-      }
-    })
-    video.addEventListener('error', function () {
-      warn('视频加载失败，保持原生外观：' + String(video.src))
-    })
-    stage.appendChild(video)
+    video = videos[0]
 
     var glass = document.createElement('div')
     glass.id = 'svb-glass'
@@ -243,25 +562,54 @@
     }
   }
 
+  /**
+   * 右区左缘那条 0.2 白的分隔线：右栏 tab 宿主自带的 border-left，位置刚好落在
+   * 视频与右区的交界上，在暗画面里就是一根从顶到底的亮线，读成"布局被切成两段"。
+   * 不按类名猜（那是 CSS Module 的哈希，换版本就变），按坐标现找：从交界点
+   * 往祖先方向走，谁有左边框、且左缘就压在交界上，就抹掉它。
+   */
+  function clearEdgeBorder(x, height) {
+    if (!(x > 1)) return
+    var y = Math.round(height / 2)
+    // 不能用"从交点往祖先走"：面板的边框在兄弟节点上，交点本身是个透明的拖拽把手，
+    // 它的祖先里根本没有这条边框。elementsFromPoint 给的是该点下方的全部元素栈，
+    // 才找得到真正画线的那个。
+    var stack = document.elementsFromPoint ? document.elementsFromPoint(Math.round(x) + 1, y) : []
+    for (var i = 0; i < stack.length; i += 1) {
+      var el = stack[i]
+      if (!el || el.nodeType !== 1 || !el.style) continue
+      if (String(el.id || '').indexOf('svb-') === 0) continue
+      var rect = el.getBoundingClientRect()
+      if (Math.abs(rect.left - x) > 1.5) continue
+      var style = getComputedStyle(el)
+      if (parseFloat(style.borderLeftWidth) > 0 && style.borderLeftStyle !== 'none') {
+        el.style.setProperty('border-left', '0', 'important')
+      }
+    }
+  }
+
   function placeVideo(regionW, cssH, offsetX) {
-    if (!video || !host || !host.stage) return
+    if (videos.length === 0 || !host || !host.stage) return
     var fx = typeof CONFIG.focusX === 'number' ? CONFIG.focusX : 78
     var fy = typeof CONFIG.focusY === 'number' ? CONFIG.focusY : 40
 
     // 尺寸交给 CSS：视频永远铺满 stage（100%×100%），多余部分由 object-fit:cover 裁掉。
     // 不写 px 宽高——写了就得靠 JS 追每一次窗口变化，追漏一次就是"窗口变大、视频没变"。
     // 现在窗口怎么变，浏览器自己重排，JS 只需要改 stage 的宽度（=接缝位置）。
-    video.style.objectFit = 'cover'
-    video.style.objectPosition = fx + '% ' + fy + '%'
-    video.style.width = '100%'
-    video.style.height = '100%'
-    video.style.left = '0px'
-    video.style.top = '0px'
+    var focus = fx + '% ' + fy + '%'
+    videos.forEach(function (el) {
+      el.style.objectFit = 'cover'
+      el.style.objectPosition = focus
+      el.style.width = '100%'
+      el.style.height = '100%'
+      el.style.left = '0px'
+      el.style.top = '0px'
+      el.setAttribute('data-focus', fx + '%/' + fy + '%')
+    })
     host.stage.style.left = (offsetX || 0) + 'px'
     host.stage.style.top = '0px'
     host.stage.style.width = Math.max(0, Math.round(regionW)) + 'px'
     host.stage.style.height = Math.max(0, Math.round(cssH)) + 'px'
-    video.setAttribute('data-focus', fx + '%/' + fy + '%')
   }
 
   function applyLayout() {
@@ -310,18 +658,24 @@
     scrimConv.style.width = Math.max(0, videoRight - Math.round(left + sideWidth)) + 'px'
     // 玻璃：videoRight → 窗口右缘，一整块。3/4/5/6 栏共用它，
     // 所以这里只认 videoRight，没有任何"第几栏"的宽度。
-    sheet.style.left = videoRight + 'px'
-    sheet.style.width = rightWidth + 'px'
+    // 左缘往视频里压 2px：页面底色（被让开后的默认白）会从两块不透明层的
+    // 亚像素接缝里漏出来，正好落在这条边界上，看上去就是一根亮线。重叠即消失，
+    // 2px 都是不透明玻璃色，压在视频最后一列像素上看不出来。
+    sheet.style.left = (videoRight - 2) + 'px'
+    sheet.style.width = (rightWidth + 2) + 'px'
     // 收边带整条落在视频一侧，右端正好停在 videoRight：它在那里已经是玻璃色，
     // 于是接缝两侧同色，肉眼看到的是一条自然的收边而不是两块板相撞。
     // left 允许为负（窄窗口），色阶几何靠位置保持、靠玻璃层的 overflow:hidden 裁掉。
     seam.style.left = videoRight - SEAM_WIDTH + 'px'
     seam.style.width = SEAM_WIDTH + 'px'
-    // 一盏灯：从接缝左侧 200px 起跨过接缝，和人物脚下的光连成一片。
+    // 一盏灯：左缘与收边带对齐，只落在右区，不探进视频。
     // 同样允许 left 为负，径向渐变的百分比才会一直贴着接缝、不被夹到右栏里。
     var glowLeft = videoRight - GLOW_LEAD
     glow.style.left = glowLeft + 'px'
     glow.style.width = Math.max(0, viewportWidth - glowLeft) + 'px'
+
+    // 右区面板自己那条左边框也要收掉：它画在玻璃之上，正好压在接缝上。
+    clearEdgeBorder(videoRight, stageHeight)
 
     var visible = rightWidth > 0 ? 'block' : 'none'
     sheet.style.display = visible
@@ -433,6 +787,9 @@
     ensureDark()
     schedule()
     watch()
+    startStateStream()
+    startDebug()
+    playClip(decideNext())
   }
 
   function disable() {
@@ -441,19 +798,31 @@
     restoreDark()
     restoreColumnBackgrounds()
     if (host) {
-      if (video) {
+      stopStateStream()
+      stopDebug()
+      videos.forEach(function (el) {
         try {
-          video.pause()
+          el.pause()
         } catch (error) {
           /* 暂停失败不影响卸载 */
         }
-        video.removeAttribute('src')
-        video.load()
-      }
+        el.removeAttribute('src')
+        try {
+          el.load()
+        } catch (error) {
+          /* 忽略 */
+        }
+      })
+      videos.length = 0
       host.stage.remove()
       host.glass.remove()
       host = null
       video = null
+      currentClip = ''
+      currentPool = null
+      currentIndex = -1
+      currentChosenState = ''
+      latestSnapshot = null
     }
     if (resizeObserver) {
       resizeObserver.disconnect()
@@ -471,9 +840,18 @@
     else enable()
   }
 
-  /** S2 会用到：宿主推 SSE 后调它切素材。阶段一只记录。 */
+  /** 开发钩子：伪造一份快照立即切，用来在不跑真回合时验收素材。 */
   function setState(next) {
-    state = String(next || 'idle')
+    var name = String(next || 'idle')
+    sourceKind = 'manual'
+    latestSnapshot = {
+      seq: (latestSnapshot && typeof latestSnapshot.seq === 'number' ? latestSnapshot.seq : 0) + 1,
+      time: Date.now(),
+      current: { state: name, isNew: false },
+      agents: [],
+    }
+    state = name
+    playClip(decideNext())
   }
 
   addEventListener('keydown', function (event) {

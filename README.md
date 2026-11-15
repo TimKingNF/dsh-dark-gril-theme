@@ -25,7 +25,19 @@ node --test tests/host.test.mjs
 node --check runtime/bg.js
 ```
 
-不装插件联调：`node tools/dev-server.mjs` 起 3099，然后在页面里 XHR 取 `runtime/bg.css` 与 `runtime/bg.js` 注入，配 `globalThis.__DSH_STATE_VIDEO_BG__`。
+不装插件联调：`node tools/dev-server.mjs` 起 3099，在任意页面控制台贴一行即可，配置与素材清单由服务器现算：
+
+```js
+const s=document.createElement('script');s.src='http://127.0.0.1:3099/inject.js';document.head.appendChild(s)
+```
+
+注入后逐态验收（`stateUrl` 为空时只能手动驱动）：
+
+```js
+for (const s of ['idle','thinking','speaking','acting','approval']) {
+  __DSH_STATE_VIDEO_BG_API__.setState(s); await new Promise(r=>setTimeout(r,7000))
+}
+```
 
 ## 装
 

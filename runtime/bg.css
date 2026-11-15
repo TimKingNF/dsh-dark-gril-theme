@@ -2,7 +2,7 @@
  * dsh-state-video-bg —— 页面侧样式（阶段一）。
  *
  * 三层从后到前：
- *   #svb-stage (z-index:-2)  视频，只铺前两栏，前两栏各压一层暗蒙版
+ *   #svb-stage (z-index:-2)  视频（.svb-video ×2 交叉淡入），只铺前两栏，前两栏各压一层暗蒙版
  *   #svb-glass (z-index:-1)  接缝收边 + 右侧整块玻璃 + 跨栏光源
  *   #root 内的应用内容       原样在上
  *
@@ -11,9 +11,9 @@
  *
  * 右区几何（宽度全部由 bg.js 的 applyLayout() 写入，样式里不认"第几栏"）：
  *   videoRight = 侧栏 + 对话区的右缘
- *   #svb-seam   [videoRight-220, videoRight)   收边带，整条压在视频上，不进右栏
+ *   #svb-seam   [videoRight-32, videoRight)    收边带，32px 软接边，不进右栏
  *   #svb-sheet  [videoRight, 窗口右缘]          不透明玻璃
- *   #svb-glow   [videoRight-200, 窗口右缘]      一盏灯，跨过接缝
+ *   #svb-glow   [videoRight-32, 窗口右缘]       一盏灯，只在右区，不再探进视频
  */
 
 /* 画布底色必须让开：主题把不透明底色画在 html/body 和 --dsw-alias-bg-base 上，
@@ -60,7 +60,8 @@ html[data-svb='on'] body {
   pointer-events: none;
 }
 
-#svb-video {
+/* 双 video 共用一套几何：换素材靠 data-shown 在两个元素间迁移，不 seek、不设 loop。 */
+.svb-video {
   position: absolute;
   top: 0;
   left: 0;
@@ -70,11 +71,12 @@ html[data-svb='on'] body {
   /* 人物偏右：焦点由 JS 按配置写入 */
   object-position: var(--svb-focus, 78% 40%);
   opacity: 0;
-  transition: opacity 700ms ease;
+  /* 400ms 与状态机的交叉淡入同一档，改一处就要改两处 */
+  transition: opacity 400ms ease;
   background: transparent;
 }
 
-#svb-video[data-shown='1'] {
+.svb-video[data-shown='1'] {
   opacity: 1;
 }
 
@@ -106,23 +108,21 @@ html[data-svb='on'] body {
    所以这里没有 border、没有分隔线，也没有任何按栏写死的样式。 */
 #svb-sheet {
   background-image: var(--svb-sheet-ramp);
-  /* 左缘 1px 冷高光 + 顶缘 1px：玻璃与视频之间的收边靠它收一口光。 */
-  box-shadow:
-    inset 1px 0 0 rgba(255, 255, 255, 0.07),
-    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  /* 只留顶缘 1px 高光。左缘那条 `inset 1px 0 0` 已去掉：它正好落在视频与右区的
+     交界上，在暗画面里就是一条从顶到底的亮线，看起来像把布局切成了两段。 */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
   /* 不再有 mask-image：那几行 mask 就是"视频透进面板"的元凶。
      右栏是硬边界，一块像素都不含视频。 */
   /* 不透明层上 backdrop-filter 看不到任何东西，还会白跑一遍全区域模糊，去掉。 */
 }
 
-/* 接缝收边：整条叠在视频上（右端正好压在 videoRight），
-   从完全透明渐变到"玻璃在那一高度上的颜色"。
-   底色用与玻璃同一个变量，横向用 smoothstep 的 alpha 罩子；
-   右端 alpha=1 → 与玻璃左端逐像素同色，于是右栏里既没有视频、也没有色差。 */
+/* 接缝收边：32px 软接边，右端压在 videoRight 上，
+   从视频原亮度渐变到"玻璃在那一高度上的颜色"。
+   只做抗锯齿级过渡——原来的 220px 会让画面右缘出现一条比两侧都暗的带子，
+   看起来像布局被切成两段。 */
 #svb-seam {
   background-image: var(--svb-sheet-ramp);
-  /* 横向 alpha = smoothstep(t), t = x/220：t²(3-2t)，两端斜率为 0。
-     左边看不出"从哪里开始压暗"，右边也不会和玻璃撞出一条硬边。
+  /* 横向 alpha = smoothstep(t), t = x/32：两端斜率为 0。
      下列 stop 即该曲线在 1/8 步长上的取值（误差 < 0.5%）。 */
   -webkit-mask-image: linear-gradient(
     90deg,
@@ -150,9 +150,12 @@ html[data-svb='on'] body {
   );
 }
 
-/* 跨所有右栏的同一盏灯，左端伸出接缝压在视频右下角。
+/* 跨所有右栏的同一盏灯，左缘与收边带对齐，不再探进视频。
    只有这一层：每栏各画一个光斑会在栏边界重新起亮，读成几块独立的板。 */
 #svb-glow {
+  /* 左缘 32px 淡入：光源落在视频里会多出一条暖色竖边，和接缝撞成两条线。 */
+  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 32px);
+  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 32px);
   background-image:
     /* 主光斑：圆心落在灯泡左端附近，往右下淡出。 */
     radial-gradient(
@@ -167,8 +170,7 @@ html[data-svb='on'] body {
       rgba(226, 152, 88, calc(0.13 * var(--svb-glow, 1))),
       rgba(212, 144, 82, 0) 72%
     ),
-    /* 极淡的横向余晖，跨过接缝铺到视频那一侧，
-       让右侧的暖光和人物脚下的光读成同一盏灯。 */
+    /* 极淡的横向余晖，只在右区里化开暖光，不再往视频那边铺。 */
     linear-gradient(
       90deg,
       rgba(255, 255, 255, 0.018),
@@ -177,7 +179,30 @@ html[data-svb='on'] body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #svb-video {
+  .svb-video {
     display: none;
   }
+}
+
+/* 调试浮窗：只在 CONFIG.debug 为真时由 JS 创建，默认不存在。 */
+#svb-debug {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 2147483000;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(8, 6, 7, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.9);
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  pointer-events: none;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+
+#svb-debug pre {
+  margin: 0;
+  font: inherit;
+  color: inherit;
 }
