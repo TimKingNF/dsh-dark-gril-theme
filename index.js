@@ -97,7 +97,7 @@ function readRuntime(fileName) {
  * @param {string} dshHome
  * @returns {string}
  */
-function resolveAssetDir(dshHome) {
+export function resolveAssetDir(dshHome) {
   const userDir = path.join(dshHome, 'dsh-dark-gril-theme', 'assets')
   try {
     if (readdirSync(userDir).some((name) => /\.(webm|mp4)$/iu.test(name))) return userDir
@@ -252,7 +252,7 @@ function readJsonBody(req) {
  * @param {import('node:http').IncomingMessage} req
  * @returns {boolean}
  */
-function isSameOriginRequest(req) {
+export function isSameOriginRequest(req) {
   const origin = req.headers.origin
   if (typeof origin !== 'string' || origin === '') return true
   try {

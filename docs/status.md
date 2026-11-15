@@ -1,6 +1,6 @@
 # 进度总结
 
-> 快照：2026-11-15 16:06（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #13（配置页补快捷键与浮窗操作说明）
+> 快照：2026-11-15 16:25（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #14（整理审查项 + 发布准备：素材外置、规则注入、跨源写保护）
 
 ## 一句话状态
 
@@ -38,8 +38,13 @@
 | S3 快捷键与开关同源 | 完成 | `Ctrl+Alt+M` 与设置页开关都走 POST 落盘；页面内用 `dgt-config` 事件双向同步 |
 | S3 观感不再写 localStorage | 完成 | 删掉 `dgt-mode`，模式只读 `$DSH_HOME/dsh-dark-gril-theme.json` |
 | S3 配置页快捷键说明 | 完成 | `client.js` 的 `Shortcuts` 段：`Ctrl+Alt+M` / `Ctrl+Alt+B` / 拖动与折叠三条，kbd 方块 + 说明文字 |
+| S4 素材目录外置 | 完成 | `index.js` `resolveAssetDir()`：`$DSH_HOME/dsh-dark-gril-theme/assets/` 里至少一段视频就整目录接管，否则回落包内 `assets/`；`tests/assets-dir.test.mjs` 4 例 |
+| S4 轮播规则单一真相 | 完成 | `lib/pools.js` 的 `pickNext` 源码经 `__DGT_RULES__` 注入页面，`runtime/bg.js` 删掉自己那份 `pickIndex` / `poolForState` 复刻；`state-service.js` 快照直接带 `pool` 名 |
+| S4 配置写入跨源保护 | 完成 | `index.js` `isSameOriginRequest()`：POST 的 `Origin` 与 `Host` 不一致回 403 `cross-origin`；无 `Origin` 的本地请求放行；`tests/assets-dir.test.mjs` 2 例 |
+| S4 发布准备 | 完成 | `package.json` 元数据（MIT、keywords、engines、repository、files 去掉素材）、`LICENSE`、`CHANGELOG.md`、`README.md` 重写、`npm test` / `npm run pack:check`；`npm pack` 14 文件 / 44KB，无 webm |
+| S4 GitHub 托管 | 完成 | `main` = `5c2fbca`（代码，不含素材）；`assets` 分支 = `38f64cd`（22 段 webm + 规格表）；`git clone --branch assets` 实测 22 段到位 |
 
-测试：`node --test "tests/*.test.mjs"` → 40/40（host 3 + machine 14 + pools 12 + state-service 4 + config 7）；`node --check index.js client.js lib/*.js runtime/bg.js` 通过。
+测试：`node --test "tests/*.test.mjs"` → 48/48（host 3 + machine 14 + pools 12 + state-service 6 + config 7 + assets-dir 6）；`node --check index.js client.js lib/*.js runtime/bg.js` 通过。
 
 
 ## S3 配置层（修订 #7）
@@ -184,6 +189,14 @@
 > ② 新增 `Shortcuts` 段挂在本页开关下方，三条：`Ctrl+Alt+M` 切 dark / beautify（等同上面那个开关）；`Ctrl+Alt+B` 临时关整层背景、这一下不写配置；拖动标题条与折叠。键位用等宽小方块（kbd 样式）渲染，说明文字走 `opacity 0.62` 的次要色，段落顶部 `borderTop` 与开关区隔开。
 > ③ 快捷键真相在 `runtime/bg.js:1292-1302`（`ctrlKey && altKey` 且 `key === 'b'` → `toggle()`、`'m'` → `toggleMode()`）；说明只是文案，不新增按键、不改行为。
 > ④ 验证：`node --check client.js` 通过；页面侧 rev 从 `ad292a6e6d5e` 变成 `e46a27b6ecd3`，`GET /plugins/??dsh-dark-gril-theme/client.js&rev=e46a27b6ecd3` 200 / 12477 字节，内容里「快捷键」出现 4 次。改的是纯文本与一个无状态组件，开关逻辑一行未动。
+> 修订 #14 · 2026-11-15 16:25。整理审查项并准备发布。用户原话（16:10）：「先把代码审查提出的问题都修复完毕。然后素材的问题，不默认加入程序包中，但我希望托管在 github 上，让用户自行下载。仓库我已经新建好了，地址可见 https://github.com/TimKingNF/dsh-dark-gril-theme」。
+> ① 轮播规则两份的问题按「源码注入」解决，不是抽包：`index.js` 把 `pickNext` 的 `String()` 注入成 `globalThis.__DGT_RULES__`，页面侧 `pickIndex` 只调它，桶名也改由 host 快照给出（`snapshot().current.pool`），`runtime/bg.js` 里两份复刻实现删掉。
+> ② `machine.feedChunk` 是空实现却仍被 `state-service.js` 调用，直接删方法 + 删调用；`assistant-stream` 只认 `start` / `end`。
+> ③ `assetNames()` 每请求 `readdirSync` 改成按目录 `mtimeMs` 缓存；素材目录改由 `resolveAssetDir()` 决定（用户目录优先，包内兜底）。
+> ④ 配置 POST 加 `isSameOriginRequest()`：`Origin` 与 `Host` 不一致回 403。本机其它进程仍可写，这是本地工具不做鉴权，只是挡住网页跨源。
+> ⑤ 发布物：`private` 去掉、版本 `0.1.0-s1` → `0.1.0`、`UNLICENSED` → `MIT`、补 `repository` / `homepage` / `bugs` / `keywords` / `engines`（`node >=22`、`dsh >=0.2.2-rc.2 <0.3.0-0`）、`files` 不再收素材、加 `scripts.check` / `test` / `pack:check`；新增 `LICENSE`、`CHANGELOG.md`，`README.md` 与 `assets/README.md` 按当前行为重写。
+> ⑥ 素材外置：22 段 127MB 推到 `assets` 分支，用户 `git clone --branch assets` 后放进 `$DSH_HOME/dsh-dark-gril-theme/assets/`。实测 clone 得 22 段、`npm pack` 只有 14 个文件 44KB。
+> ⑦ 验证：`npm test` 48/48（新增 `tests/assets-dir.test.mjs` 6 例）；`npm run check` 八个入口 `node --check` 全过；`git push` 后远端 `main` = `5c2fbca`、`assets` = `38f64cd`。
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
 **状态源**：`agent/assistant-stream` + `tools/execute` + `approval/request`（waterfall，必须 `return next()`）+ `agent/status` / `uiSession.sessionStatus`（兜底纠偏）。
@@ -207,6 +220,9 @@
 5. **右栏那道 1px 白边靠 DOM 现状抹除**：它来自宿主面板的 `border-left: 0.666667px rgba(255,255,255,0.2)`（DPR 1.5 下正好一个设备像素、+23 亮度）。`clearEdgeBorder()` 每次布局按坐标重扫并置 0，宿主若改用它法画边（box-shadow / 伪元素 / 背景图），这里要跟着改。
 6. **host→SSE→client 没端到端跑过**：主机侧状态机、SSE 路由、client 消费三段各自验过（单测 / dev server `/config.json`+`/inject.js` / 页面里 `setState()` 假快照），但没有一次真实的 Agent 回合经 SSE 推过来驱动换态。装插件后第一件事就是跑这个。
 7. **`beautify` 下长文可读性未人眼判**：对话列零遮罩，文字直接压在人物上，只有用户主观能定。
+8. **配置写接口只挡跨源，不做鉴权**：`POST /dsh-dark-gril-theme/config.json` 会拒绝 `Origin` 与 `Host` 不一致的请求，本机其它进程仍可改配置。把它当本地工具看待，别当服务暴露到公网。
+9. **素材要自己下**：包内只有 `assets/README.md`，没视频时插件仍装得上，但只有暗玻璃没画面。素材在仓库 `assets` 分支（`38f64cd`，22 段 127MB），下载方式见 `README.md`。
+10. **包装进干净环境没验过**：`dsh plugin add` 在本机沙箱恒失败（见限制 1），安装步骤仍以 `pnpm link` 为准；`npm pack` 产物只验了文件清单与体积，没有在全新 profile 里装一遍。
 
 ## 提交记录
 
@@ -226,7 +242,8 @@
 | `3a85451` | 修订 #11：5 态（done 归位、提问并入 approval、子 agent 计入 thinking、listening 共用） |
 | `03fc188` | 补 `tests/state-service.test.mjs` 四例（提问 → approval、子 agent → thinking），全套 40/40 |
 | `3e3ac2b` | 修订 #12：idle 分新会话/跑过回合两种池，done 窗口 6s → 12s |
-| （本条） | 修订 #13：配置页补快捷键与调试浮窗操作说明 |
+| `3948290` | 修订 #13：配置页补快捷键与调试浮窗操作说明 |
+| `5c2fbca` | 修订 #14：整理审查项并准备发布（素材外置、规则注入单一真相、跨源写保护、包元数据与文档） |
 
 ## 下一步
 
@@ -238,9 +255,10 @@
 | S3.5 | 调试浮窗 v2（拖动 / 分栏 / 监听态 / 预载可视化） | 完成 | 真机验过拖动、折叠、事件流水；播放与预载卡待用户前台窗口确认 |
 | S4 | 脚本化验收（5 态截图 + 右栏取色 + 帧时间 + 残留检测） | 1.5h | 脚本一条命令出报告 |
 | S5 | 打磨（光斑与人物过渡、素材缺失兜底文案） | 1h | 用户主观通过 |
+| S6 | 发布：npm 发包或 `dsh plugin add` 走通 + 干净 profile 安装验证 | 0.5h | 一台干净环境按 README 装成功并看到画面 |
 
 ## 已拍板（原待定三条，2026-11-15 14:30）
 
 1. **插件名**：`dsh-dark-gril-theme` 为最终名，不改。
-2. **素材归属**：22 段已从 `C:\Users\TimKing\Downloads\object-live-states` **移动**进 `assets/`（原目录已清空删除，移动前逐个 sha256 校验与目标一致）。仍由 `.gitignore` 排除，不进 git——仓库只有代码，素材随工作区走。
+2. **素材归属（修订 #14 更新）**：22 段最初从 `C:\Users\TimKing\Downloads\object-live-states` **移动**进工作区 `assets/`（原目录已清空删除，移动前逐个 sha256 校验）。现在 `main` 分支仍用 `.gitignore` 排除素材，只放代码；素材另存 `assets` 分支（`38f64cd`）供用户下载到 `$DSH_HOME/dsh-dark-gril-theme/assets/`——不随 npm 包发布。
 3. **内部命名**：统一到 `dgt`。全局 `__DGT__`（配置）/ `__DGT_API__`（API）/ `__DGT_INSTALLED__`（幂等哨兵）；元素 `#dgt-stage` `#dgt-glass` `#dgt-sheet` `#dgt-seam` `#dgt-glow` `#dgt-scrim-side` `#dgt-scrim-conv` `#dgt-debug` `#dgt-video-a/b`；类 `.dgt-video`；属性 `html[data-dgt]` / `html[data-dgt-mode]`；CSS 变量 `--dgt-side-dim` `--dgt-conv-dim` `--dgt-glow` `--dgt-sheet-ramp` `--dgt-focus`；localStorage `dgt-mode`；dev server 注入的 style id `dgt-dev-style`。
