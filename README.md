@@ -3,7 +3,11 @@
 把 DeepSeek Harness 的会话状态变成背景视频：左侧栏与中间对话区播视频，右侧工作台保留自建磨砂玻璃，
 按 Agent 正在做什么切换片段。
 
-![实机截图](docs/s1-real-gui.jpg)
+| dark | beautify |
+| --- | --- |
+| ![dark 模式](docs/preview-dark.webp) | ![beautify 模式](docs/preview-beautify.webp) |
+
+两种模式同一份素材、同一套布局，只差三档观感变量；`Ctrl+Alt+M` 原地切换。
 
 ## 它做什么
 

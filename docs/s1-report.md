@@ -32,7 +32,7 @@ readyState: 4           # 视频已在播
 sheet: left:1400px; width:1146px; display:block   # 右侧玻璃正好盖住工作台
 ```
 
-截图见 `docs/s1-real-gui.jpg`（第一版）与 `docs/s1-seam-v2.png`（接缝与光斑调整后）。接缝那张用的是同一段素材抽出来的静帧，不是 `<video>`——本轮联调窗口里视频解码一直停在 `readyState 0`，连裸 `<video>` 都加载不出来，而同一个 URL 用 XHR 59ms 拿完 5.46MB，是环境问题不是代码问题（上一轮同一份代码在另一个窗口 `readyState: 4` 播过）。材质、遮罩、光源都和播放时同一套 CSS。
+当时的核对图已随后续宣传图整理移出仓库。接缝核对用的是同一段素材抽出来的静帧，不是 `<video>`——本轮联调窗口里视频解码一直停在 `readyState 0`，连裸 `<video>` 都加载不出来，而同一个 URL 用 XHR 59ms 拿完 5.46MB，是环境问题不是代码问题（上一轮同一份代码在另一个窗口 `readyState: 4` 播过）。材质、遮罩、光源都和播放时同一套 CSS。
 
 开关验证（新标签页、干净 DOM）：关掉后 `data-svb` 摘掉、两层节点残留 0、`--dsw-alias-bg-base` 回到 `#fff`、`data-ds-dark-theme` 还原成 false；再打开能重新建层。
 
