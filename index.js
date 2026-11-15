@@ -263,6 +263,21 @@ export function isSameOriginRequest(req) {
 }
 
 /**
+ * 写请求的第二道门：只认 application/json 的正文。
+ *
+ * 背景：GUI 走的是宿主端口前面的中继（本机 3082），实测它会把 Origin 头吞掉，
+ * 于是同源判断在真实浏览器路径上形同放行。跨站 <form> 只能发三种简单类型
+ * （text/plain、application/x-www-form-urlencoded、multipart/form-data），
+ * 拿不到 application/json；跨站 fetch 想发 JSON 就必须先过预检，而本服务不返回
+ * 任何 CORS 头，预检必然失败。所以卡住 content-type 就能挡住"别的网页偷偷改配置"，
+ * 且不依赖中继是否转发了哪个自定义头。
+ */
+export function isJsonWrite(req) {
+  const type = req.headers['content-type']
+  return typeof type === 'string' && /^application\/json\b/iu.test(type)
+}
+
+/**
  * 生成注入行。样式必须排在脚本之前（两种渲染器都按数组顺序应用，没有按 kind 排序）。
  *
  * 轮播规则以函数源码的形式一起注入：页面侧与宿主侧读的是同一个函数，
@@ -343,6 +358,10 @@ export function apply(ctx) {
             if (req.method === 'POST') {
               if (!isSameOriginRequest(req)) {
                 sendJson(res, 403, { ok: false, error: 'cross-origin' })
+                return
+              }
+              if (!isJsonWrite(req)) {
+                sendJson(res, 403, { ok: false, error: 'not-json-write' })
                 return
               }
               const patch = await readJsonBody(req)

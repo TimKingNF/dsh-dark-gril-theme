@@ -159,6 +159,28 @@ test('路由：整份 200、Range 206、越界 416、HEAD 无正文、未登记�
   })
 })
 
+test('写配置只收 JSON 正文：text/plain 的跨站表单被挡在门外', () => {
+  const { ctx, routes } = fakeContext()
+  apply(ctx)
+  const handler = routes.get(CONFIG_ROUTE)
+
+  const form = fakeResponse()
+  handler({ method: 'POST', headers: { 'content-type': 'text/plain' } }, form)
+  assert.equal(form.statusCode, 403)
+  assert.equal(JSON.parse(Buffer.concat(form.chunks).toString('utf8')).error, 'not-json-write')
+
+  const foreign = fakeResponse()
+  handler(
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'http://evil.example', host: '127.0.0.1:3082' },
+    },
+    foreign,
+  )
+  assert.equal(foreign.statusCode, 403)
+  assert.equal(JSON.parse(Buffer.concat(foreign.chunks).toString('utf8')).error, 'cross-origin')
+})
+
 test('配置路由返回 JSON，且默认值可读', () => {
   const { ctx, routes } = fakeContext()
   apply(ctx)
