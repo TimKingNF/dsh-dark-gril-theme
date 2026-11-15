@@ -49,11 +49,24 @@
   // 两种观感：dark 是默认的可读版（压 0.48/0.54 的暗蒙版）；
   // beautify 把蒙版全撤，恢复素材原本的肤色与打光。切换只改变量，不动结构。
   var DIM_MODES = {
-    // glow 跟 conv 反着走：对话区压 0.54，光斑就只剩 0.46，
-    // 这样切到 dark 时画面和光一起变暗，不会剩一块没被压的暖光。
-    dark: { side: 0.48, conv: 0.54, glow: 0.46 },
+    // glow 跟 conv 反着走，但压得比「1-conv」更狠：对话区压 0.54 时
+    // 光斑只留 0.25。线性按 0.46 留，肉眼看还是比画面亮一截，因为
+    // 暖光压在近黑底上，sRGB 编码会把差异放大；0.25 才读得出来是同一层暗。
+    dark: { side: 0.48, conv: 0.54, glow: 0.25 },
     beautify: { side: 0, conv: 0, glow: 1 },
   }
+  /** 右区玻璃的竖向色阶在 CSS 里，启动时拷一份原值，好让 beautify 能换回去。 */
+  var BASE_RAMP = ''
+  /**
+   * dark 模式专用的更暗色阶：只把 83% 与 100% 两档压下来（32,21,14 → 26,17,12、
+   * 47,30,17 → 37,23,14），中上部原样。
+   *
+   * 为什么动这个而不是只动 --svb-glow：实测面板左下角那块，0.46 → 0.10 才降
+   * 5.5 级（41.0 → 35.5），因为那块亮度里八成来自玻璃自身底色的暖色，
+   * 光斑只占小头。要让 dark 真的暗一档，只能压这两个色阶。
+   */
+  var DARK_RAMP =
+    'linear-gradient(180deg, rgb(13,10,12) 0%, rgb(14,11,11) 40%, rgb(19,14,11) 64%, rgb(26,17,12) 83%, rgb(37,23,14) 100%)'
   var MODE_KEY = 'svb-mode'
   var mode = 'dark'
   var pollTimer = null
@@ -477,6 +490,7 @@
     if (typeof CONFIG.sidebarDim === 'number') DIM_MODES.dark.side = CONFIG.sidebarDim
     if (typeof CONFIG.convDim === 'number') DIM_MODES.dark.conv = CONFIG.convDim
     if (typeof CONFIG.glow === 'number') DIM_MODES.dark.glow = CONFIG.glow
+    BASE_RAMP = getComputedStyle(document.documentElement).getPropertyValue('--svb-sheet-ramp').trim()
     applyMode(readMode(), false)
   }
 
@@ -608,6 +622,9 @@
     document.documentElement.style.setProperty('--svb-side-dim', String(dims.side))
     document.documentElement.style.setProperty('--svb-conv-dim', String(dims.conv))
     document.documentElement.style.setProperty('--svb-glow', String(dims.glow))
+    // 玻璃色阶跟着模式走：dark 用压过的色阶，beautify 换回 CSS 里的原值。
+    var ramp = name === 'dark' ? DARK_RAMP : BASE_RAMP
+    if (ramp) document.documentElement.style.setProperty('--svb-sheet-ramp', ramp)
     if (persist) {
       try {
         localStorage.setItem(MODE_KEY, name)
