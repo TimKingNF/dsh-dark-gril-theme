@@ -33,22 +33,30 @@
 
 需要 DSH `>=0.2.2-rc.2`（用到 `user-questions/request` 这个 waterfall）与 Node `>=22`。
 
-包还没发到 npm，当前从源码装：
+从 npm 装：
 
 ```bash
-git clone https://github.com/TimKingNF/dsh-dark-gril-theme.git
-cd ~/.dsh/profiles/web
-pnpm add link:/绝对路径/dsh-dark-gril-theme
+dsh plugin add dsh-dark-gril-theme --profile web
 ```
 
-然后把包名加进该 profile `package.json` 的 `dsh.profile.bundles` 数组，重启 DSH。
+`dsh plugin` 把参数原样转给 profile 目录里的 pnpm，所以等价的直接写法是：
 
-包自带 `cordis.patch.yml`（一条 `insert`），loader 会按包名自动挂上，不用手写 patch 条目。
-只改 `runtime/` 与 `client.js` 刷新页面即可；改 `index.js` 或 `lib/` 必须重启进程。
+```bash
+cd ~/.dsh/profiles/web
+pnpm add dsh-dark-gril-theme
+```
+
+装完确认 `~/.dsh/profiles/web/package.json` 的 `dsh.profile.bundles` 数组里有 `"dsh-dark-gril-theme"`
+（设置 →「插件」页安装会自动加；命令行装完自己看一眼），然后重启 DSH。
+
+包自带 `cordis.patch.yml`（一条 `insert`），loader 按包名自动挂上，不用手写 patch 条目。
+升级用 `dsh plugin add dsh-dark-gril-theme@latest --profile web`。
+
+只改 `runtime/` 与 `client.js` 刷新页面即可生效；改 `index.js` 或 `lib/` 必须重启进程。
 
 ## 素材
 
-素材（22 段，127MB）不随包发，存在仓库的 `assets` 分支，自己下载：
+素材（22 段，127MB）不随包发，放在仓库的 `assets` 分支，自己下一步：
 
 ```bash
 git clone --branch assets --depth 1 https://github.com/TimKingNF/dsh-dark-gril-theme.git /tmp/dgt-assets
@@ -56,7 +64,7 @@ mkdir -p ~/.dsh/dsh-dark-gril-theme/assets
 cp /tmp/dgt-assets/*.webm ~/.dsh/dsh-dark-gril-theme/assets/
 ```
 
-插件优先读 `$DSH_HOME/dsh-dark-gril-theme/assets/`，目录不存在才回落到包内 `assets/`。
+插件优先读 `$DSH_HOME/dsh-dark-gril-theme/assets/`（`DSH_HOME` 缺省为 `~/.dsh`），目录里一个视频都没有才回落到包内 `assets/`。
 放这里的好处是升级插件不会覆盖你的素材。
 
 文件名即桶里的键名，规格见 [assets/README.md](assets/README.md)。想用自己的素材，按同名替换即可，
@@ -64,8 +72,7 @@ cp /tmp/dgt-assets/*.webm ~/.dsh/dsh-dark-gril-theme/assets/
 
 ## 配置
 
-真相源是 `$DSH_HOME/dsh-dark-gril-theme.json`（`DSH_HOME` 缺省为 `~/.dsh`）。
-设置页的两个开关写的就是这个文件，手改也生效（刷新页面）。
+真相源是 `$DSH_HOME/dsh-dark-gril-theme.json`。设置页的两个开关写的就是这个文件，手改也生效（刷新页面）。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
@@ -107,7 +114,7 @@ cp /tmp/dgt-assets/*.webm ~/.dsh/dsh-dark-gril-theme/assets/
 ## 开发
 
 ```bash
-npm test        # node --check 全部入口 + 49 例单测
+npm test           # node --check 全部入口 + 49 例单测
 npm run pack:check
 ```
 
@@ -115,4 +122,4 @@ npm run pack:check
 
 ## 许可
 
-MIT
+[GNU General Public License v3.0 or later](LICENSE)（`GPL-3.0-or-later`）。

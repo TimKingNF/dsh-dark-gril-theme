@@ -15,6 +15,7 @@
 - **调试浮窗**：可拖动、可折叠，显示在听什么状态、在演哪段、下一段预载、桶进度与事件流水。
 - **配置单一真相源**：`$DSH_HOME/dsh-dark-gril-theme.json`，坏键坏文件一律退化成默认值。
 - **素材不随包发**：从 GitHub 的 `assets` 分支下载后放到 `$DSH_HOME/dsh-dark-gril-theme/assets/`。
+- **许可**：GPL-3.0-or-later，全文见 [LICENSE](LICENSE)。
 
 ### 整理（未生效于功能，见提交记录）
 

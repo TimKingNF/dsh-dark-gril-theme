@@ -42,7 +42,7 @@
     "test": "npm run check && node --test \"tests/*.test.mjs\"",
     "pack:check": "npm pack --dry-run"
   },
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
