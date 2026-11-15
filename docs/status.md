@@ -1,6 +1,6 @@
 # 进度总结
 
-> 快照：2026-11-15 15:05（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #7（配置单一真相源 + 设置页）
+> 快照：2026-11-15 15:15（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #8（设置页真机验证 + 深色皮肤对比度）
 
 ## 一句话状态
 
@@ -34,7 +34,7 @@
 | 联调捷径 | 完成 | dev server 新增 `/config.json` 与 `/inject.js`，控制台一行注入 |
 | S3 配置单一真相源 | 完成 | `lib/config.js`：白名单校验 + 同目录 tmp → rename 原子写；缺文件 / 坏 JSON 退化默认并 warn |
 | S3 配置读写路由 | 完成 | `index.js` `CONFIG_ROUTE`：GET 回全量配置，POST 回 200 `{ok:true,config}` / 400 `no-valid-key` / 500 `write-failed`；请求体上限 64KB |
-| S3 设置页（两个开关） | 完成，待真机验 | `client.js`：`settings.section` 顶层页「Dark Gril 主题」，打光模式 / 调试浮窗两个 `role=switch` 开关 |
+| S3 设置页（两个开关） | 完成，真机已验 | `client.js`：`settings.section` 顶层页「Dark Gril 主题」，打光模式 / 调试浮窗两个 `role=switch` 开关；账户菜单 → 设置 → 左栏「Dark Gril 主题」点进去可见、可点 |
 | S3 快捷键与开关同源 | 完成 | `Ctrl+Alt+M` 与设置页开关都走 POST 落盘；页面内用 `dgt-config` 事件双向同步 |
 | S3 观感不再写 localStorage | 完成 | 删掉 `dgt-mode`，模式只读 `$DSH_HOME/dsh-dark-gril-theme.json` |
 
@@ -60,7 +60,13 @@
 - 卡片行为：GET 配置 → 渲染两个开关；改动乐观更新 + POST，失败回退旧值并显示原因；POST 成功后调 `__DGT_API__.setMode/setDebug`（第二参 `persist=false`，避免二次落盘）让页面立刻变；监听 `document` 的 `dgt-config` 事件，快捷键改了模式时开关跟着走。
 - 文案：`打光模式`（开=beautify 撤遮罩、关=dark 压暗）、`调试浮窗`。
 
-**未验**：进程里的插件模块还是旧版（POST 被忽略、文件没生成、返回体里没有 `debug`/`beautify`），说明宿主侧要重启才换代码——profile 里没有 `dsh-hmr`，文件保存不会触发重载。设置页那半边同理，要刷新页面才会拉新的 `client.js`。
+**已验（2026-11-15 15:05–15:12，真机）**
+
+- 宿主侧重启后（profile 没有 `dsh-hmr`，改插件宿主代码只能重启进程）：`GET /dsh-dark-gril-theme/config.json` 200 且含 9 键；`POST {"beautify":true}` 200 并写出 `~/.dsh/dsh-dark-gril-theme.json`；`POST {"nope":1}` 400 `no-valid-key` 且文件不变；`POST {"beautify":false}` 回滚。
+- 客户端半边：`__DSH_BOOT__` 图里有 `dsh-dark-gril-theme/client.js&rev=…`；`GET /plugins/??dsh-dark-gril-theme/client.js` 无 rev 404、带 rev 200；改文件后 rev 变（`c20443175767` → `ad292a6e6d5e`），刷新页面即换新。
+- 设置页入口（这台机器是 DS Bot 皮肤，左侧没有「设置」按钮）：左下角 **账户** 图标 → 弹层「设置」→ `.bt-settings-layer` 面板；左栏 31 项里「Dark Gril 主题」排在 TDAI Memory 之后，点进去右侧就是本卡片。
+- 端到端：点「调试浮窗」→ `aria-checked=true`、`globalThis.__DGT_API__.debug === true`、页面出现 `#dgt-debug`、卡片无「保存失败」；再点回 false，`#dgt-debug` 消失、配置文件复为 `"debug": false`。
+- 踩坑记录：`http://127.0.0.1:3082/settings` 是 404（SPA 不做该路径回退），用 bsk 直接 navigate 会把整个会话锁在错误页，只能重启 bsk 会话。设置面板只能从 UI 里点开。
 
 ## 已定稿的规格（S2 直接照做）
 
@@ -136,6 +142,12 @@
 > ②命名：`__DSH_STATE_VIDEO_BG__`/`_API__` → `__DGT__`/`__DGT_API__`，`__SVB_INSTALLED__` → `__DGT_INSTALLED__`，`#svb-*` → `#dgt-*`，`.svb-video` → `.dgt-video`，`data-svb` → `data-dgt`，`--svb-*` → `--dgt-*`，`localStorage['svb-mode']` → `['dgt-mode']`，dev server 的 `svb-dev-style` → `dgt-dev-style`。共改 7 个文件、88 处；`docs/s1-report.md` 是阶段一的存档报告，保留旧名不动。
 > ③验证：`node --check` 六个文件通过、`node --test` 23/23；dev server 重启后 `/inject.js` 里已是 `__DGT_API__`；浏览器新会话注入后 `__DGT_API__`/`__DGT__`/`__DGT_INSTALLED__` 均在、`#dgt-stage` 存在、2 个 `video.dgt-video`、`#dgt-debug` 在、`data-dgt="on"`、旧 `#svb-*` 残留 0 个；计算样式核对 `#dgt-sheet` 用的是 dark 色阶（`rgb(37,23,14)` 收尾）、`--dgt-glow: 0.25`、`--dgt-conv-dim: 0.54`、`#dgt-seam` 宽 32px、`.dgt-video` 的 `object-position` 生效。
 
+> 修订 #8 · 2026-11-15 15:15。设置页真机验证与深色皮肤对比度修复。
+> ① 设置页落位：`settings.section` 注册成功，DS Bot 皮肤的 `.bt-settings-nav` 里出现「Dark Gril 主题」，两个开关渲染、点击落盘、运行时即时生效，全链路通。
+> ② 对比度坑：初版提示文字用 `var(--dsw-alias-label-tertiary, rgba(127,127,127,0.8))`，实测 computed color 是 `rgba(18, 24, 38, 0.6)` —— DS Bot 皮肤把 `--dsw-alias-label-primary` 定义成 `#121826`（给浅面板的反色）、`--dsw-alias-label-tertiary` 是 `#adb2b8` 一类，**「label-* 就是前景色」这个假设在本皮肤下不成立**，深灰字压在深色面板上几乎看不见。
+> ③ 改法：前景一律 `color: inherit` 继承面板自身文字色，副文案用 `opacity: 0.62` 分层次；开关轨道 off `rgba(127,127,127,0.35)`、on `#3b82f6`（对齐皮肤里的 `--dsw-alias-trajectory-accent`）、圆钮 `#ffffff`。不再引用 `--dsw-alias-label-*` 当前景色（仅保留报警文案的 `--dsw-alias-label-warning`）。
+> ④ 复验：提示文字 computed color 变 `rgb(232, 237, 247)` / opacity 0.62，截图可读。
+
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
 **状态源**：`agent/assistant-stream` + `tools/execute` + `approval/request`（waterfall，必须 `return next()`）+ `agent/status` / `uiSession.sessionStatus`（兜底纠偏）。
@@ -152,7 +164,7 @@
 
 ## 已知限制
 
-1. **还没真装**：沙箱内 `dsh plugin add` 恒报 `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK … Read-only file system`，`dsh web --help` 也会写 `~/.dsh/profiles/web/cordis.yml` 被拒。目前靠「dev server + 页面注入」验收，真安装要等 S3 且需扩权。
+1. **安装方式不是 `dsh plugin add`**：沙箱内那条命令恒报 `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK … Read-only file system`，`dsh web --help` 也会写 `~/.dsh/profiles/web/cordis.yml` 被拒。实际做法是 `pnpm link` 装进 `~/.dsh/profiles/web`（dependencies 里 `"dsh-dark-gril-theme": "link:/mnt/d/workspace/dsh-dark-gril-theme"`，`node_modules/` 下是指向工作区的符号链接，`dsh.profile.bundles` 最后一项也是它）。**改宿主侧代码必须重启 DSH 进程**（profile 没有 `dsh-hmr`，存盘不触发重载）；改 `client.js` 只需刷新页面。
 2. **拖窗口尺寸没亲手验过**：`bsk` 的外层窗口 resize 被播放中的视频挡住（`media source changed`），只验了布局变化下的跟随链路。
 3. **后台窗口解不出视频帧（已查明，非代码问题）**：Agent Window 默认后台打开时 `document.visibilityState` 为 `hidden`，Chrome 推迟媒体加载，`<video>` 恒停 `readyState 0`、事件只有 `loadstart → stalled`；同一 URL 的 `fetch` 仍是 206/59ms，同页 `curl` 5.4MB/52ms。**bsk 验收必须 `bsk_session start … noFocus:false` 开在前台窗口**，否则会把测试环境当成代码故障。
 4. **截不到 docked 三/四栏**：本机 dsh-better-sidebar 是浮动模式，网格第三列恒为 0。

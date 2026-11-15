@@ -39,15 +39,18 @@ window.__ModuleLoader__.load({
       },
     ]
 
+    // DS Bot 皮肤把 --dsw-alias-label-primary 定义成 #121826（给浅面板的反色），
+    // 拿它当前景色会在深色设置面板上变成隐形字幕。前景一律继承面板自身的文字色。
     const C = {
-      border: '1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.35))',
-      borderSoft: '1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.22))',
-      primary: 'var(--dsw-alias-label-primary, inherit)',
-      secondary: 'var(--dsw-alias-label-secondary, inherit)',
-      tertiary: 'var(--dsw-alias-label-tertiary, rgba(127,127,127,0.8))',
-      track: 'rgba(127,127,127,0.28)',
-      trackOn: 'var(--dsw-alias-label-primary, #7aa2ff)',
-      knob: 'var(--dsw-alias-bg-layer-1, #ffffff)',
+      border: '1px solid rgba(127,127,127,0.35)',
+      borderSoft: '1px solid rgba(127,127,127,0.22)',
+      primary: 'inherit',
+      secondary: 'inherit',
+      tertiary: 'inherit',
+      dim: 0.62,
+      track: 'rgba(127,127,127,0.35)',
+      trackOn: '#3b82f6',
+      knob: '#ffffff',
     }
 
     /** 把一次改动推给页面里已注入的运行时；没有运行时（未注入）就只留配置。 */
@@ -129,7 +132,7 @@ window.__ModuleLoader__.load({
           h('div', { style: { fontSize: '13px', lineHeight: '1.5', color: C.primary } }, field.label),
           h(
             'div',
-            { style: { marginTop: '4px', fontSize: '12px', lineHeight: '1.55', color: C.tertiary } },
+            { style: { marginTop: '4px', fontSize: '12px', lineHeight: '1.55', color: C.tertiary, opacity: C.dim } },
             field.hint,
           ),
         ),
@@ -226,11 +229,11 @@ window.__ModuleLoader__.load({
         h('h2', { style: { margin: '0 0 6px', fontSize: '15px', fontWeight: 600, color: C.primary } }, 'Dark Gril 主题'),
         h(
           'p',
-          { style: { margin: '0 0 8px', fontSize: '12px', lineHeight: '1.6', color: C.tertiary } },
+          { style: { margin: '0 0 8px', fontSize: '12px', lineHeight: '1.6', color: C.tertiary, opacity: C.dim } },
           '按会话状态切换的背景视频层。改动即时生效，保存在 $DSH_HOME/dsh-dark-gril-theme.json，刷新页面或重启 DSH 后仍保持。',
         ),
         status === 'loading'
-          ? h('div', { style: { padding: '12px 0', fontSize: '12px', color: C.tertiary } }, '读取配置…')
+          ? h('div', { style: { padding: '12px 0', fontSize: '12px', color: C.tertiary, opacity: C.dim } }, '读取配置…')
           : null,
         status === 'error'
           ? h(
