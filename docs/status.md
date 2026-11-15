@@ -38,7 +38,7 @@
 | S3 快捷键与开关同源 | 完成 | `Ctrl+Alt+M` 与设置页开关都走 POST 落盘；页面内用 `dgt-config` 事件双向同步 |
 | S3 观感不再写 localStorage | 完成 | 删掉 `dgt-mode`，模式只读 `$DSH_HOME/dsh-dark-gril-theme.json` |
 
-测试：`node --test "tests/*.test.mjs"` → 36/36（host 3 + machine 13 + pools 12 + config 7… 以实际输出为准，本轮实测 36 pass / 0 fail）；`node --check index.js client.js lib/*.js runtime/bg.js` 通过。
+测试：`node --test "tests/*.test.mjs"` → 40/40（host 3 + machine 14 + pools 12 + state-service 4 + config 7）；`node --check index.js client.js lib/*.js runtime/bg.js` 通过。
 
 
 ## S3 配置层（修订 #7）
@@ -170,7 +170,7 @@
 > ③ done 重新成为确定态：`setRunning(false)` 时开一段 `DONE_HOLD_MS = 6000` 的收尾窗口（够一段 done 素材完整播完），`compute()` 在窗口内返回 `done`；窗口内回合又起来则立即作废；从没跑过就收到 running=false 不开窗口。idle 池随之收成单段 `idle.webm`。
 > ④ 子 agent 计入 thinking：`snapshot()` 的 `current.state` 改为 `aggregateState()` 聚合——approval 压一切；acting 只认当前会话那一台；其余只要任一 agent 在 thinking/acting 就是 thinking。原来 `current` 取 `lastActiveId`，子 agent 一跑主会话静默，画面会掉回 idle。
 > ⑤ 出错与中断不建态：不新增 error，异常路径让机器回落到 idle（回合结束的 done 窗口不算异常）。理由：22 段素材里没有 error 片，加了只能借别的态，语义更乱。
-> ⑥ 验证：`node --test "tests/*.test.mjs"` → 36/36（machine 13 + pools 12 + host 3 + config 7…实际 36 pass / 0 fail）；`node --check` 三个宿主文件通过。`runtime/bg.js` 一行未改：`pools.done` 直接生效，池子由 `__DGT__.pools` 注入。
+> ⑥ 验证：`node --test "tests/*.test.mjs"` → 40/40（machine 14 + pools 12 + state-service 4 + host 3 + config 7，实测 40 pass / 0 fail）；`node --check` 三个宿主文件通过。`runtime/bg.js` 一行未改：`pools.done` 直接生效，池子由 `__DGT__.pools` 注入。
 > ⑦ 未验：`lib/*` 是宿主侧，本次改动**需重启 DSH 进程**才生效；`user-questions/request` 的真实接线（本机审批策略已关，只能用 ask_user_question 验）尚待在真回合里点一次确认。
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
@@ -211,7 +211,8 @@
 | `7935e9d` | S3：设置页真机验证通过 + 修深色面板上的文字对比度 |
 | `475468c` | 调试浮窗 v2（拖动 / 五栏卡 / 事件流水）+ `hasStarted` 哨兵与起播兜底 |
 | `1b20235` | 修订 #10：4 态重排（speaking → thinking，listening → acting），单测同步 |
-| （本条） | 修订 #11：5 态（done 归位、提问并入 approval、子 agent 计入 thinking、listening 共用） |
+| `3a85451` | 修订 #11：5 态（done 归位、提问并入 approval、子 agent 计入 thinking、listening 共用） |
+| （本条） | 补 `tests/state-service.test.mjs` 四例（提问 → approval、子 agent → thinking），全套 40/40 |
 
 ## 下一步
 
