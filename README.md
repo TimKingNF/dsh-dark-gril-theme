@@ -36,7 +36,7 @@
 从 npm 装：
 
 ```bash
-dsh plugin add dsh-dark-gril-theme --profile web
+dsh plugin --profile web add dsh-dark-gril-theme
 ```
 
 `dsh plugin` 把参数原样转给 profile 目录里的 pnpm，所以等价的直接写法是：
@@ -50,7 +50,7 @@ pnpm add dsh-dark-gril-theme
 （设置 →「插件」页安装会自动加；命令行装完自己看一眼），然后重启 DSH。
 
 包自带 `cordis.patch.yml`（一条 `insert`），loader 按包名自动挂上，不用手写 patch 条目。
-升级用 `dsh plugin add dsh-dark-gril-theme@latest --profile web`。
+升级用 `dsh plugin --profile web add dsh-dark-gril-theme@latest`（`--profile` 必须写在 `add` 之前，写在后面会被 pnpm 当成参数）。
 
 只改 `runtime/` 与 `client.js` 刷新页面即可生效；改 `index.js` 或 `lib/` 必须重启进程。
 
