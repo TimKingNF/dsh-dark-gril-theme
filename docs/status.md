@@ -1,6 +1,6 @@
 # 进度总结
 
-> 快照：2026-11-15 14:25（Asia/Shanghai）。提交 `8667280`（基线 tag `s1-baseline` = `d6511fb`）。规格修订 #6
+> 快照：2026-11-15 15:05（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #7（配置单一真相源 + 设置页）
 
 ## 一句话状态
 
@@ -32,8 +32,35 @@
 | dark 模式光斑与玻璃色阶一起压暗 | 完成 | `DARK_RAMP` + `--dgt-glow`；左下角 p50 31.5→24.7 |
 | 调试浮窗（快照态 / 正在演 / 桶序 / 预载 / 源 / seq） | 完成 | `startDebug()` / `renderDebug()`，`CONFIG.debug` 为真时挂 `#dgt-debug` |
 | 联调捷径 | 完成 | dev server 新增 `/config.json` 与 `/inject.js`，控制台一行注入 |
+| S3 配置单一真相源 | 完成 | `lib/config.js`：白名单校验 + 同目录 tmp → rename 原子写；缺文件 / 坏 JSON 退化默认并 warn |
+| S3 配置读写路由 | 完成 | `index.js` `CONFIG_ROUTE`：GET 回全量配置，POST 回 200 `{ok:true,config}` / 400 `no-valid-key` / 500 `write-failed`；请求体上限 64KB |
+| S3 设置页（两个开关） | 完成，待真机验 | `client.js`：`settings.section` 顶层页「Dark Gril 主题」，打光模式 / 调试浮窗两个 `role=switch` 开关 |
+| S3 快捷键与开关同源 | 完成 | `Ctrl+Alt+M` 与设置页开关都走 POST 落盘；页面内用 `dgt-config` 事件双向同步 |
+| S3 观感不再写 localStorage | 完成 | 删掉 `dgt-mode`，模式只读 `$DSH_HOME/dsh-dark-gril-theme.json` |
 
-测试：`node --test "tests/*.test.mjs"` → 23/23（host 3 + machine 12 + pools 8）；`node --check index.js lib/*.js runtime/bg.js` 通过。
+测试：`node --test "tests/*.test.mjs"` → 30/30（host 3 + machine 12 + pools 8 + config 7）；`node --check index.js client.js lib/*.js runtime/bg.js` 通过。
+
+
+## S3 配置层（修订 #7）
+
+**一份配置，一个写入口。**
+
+- 真相源：`$DSH_HOME/dsh-dark-gril-theme.json`（`DSH_HOME` 未设时 `~/.dsh/dsh-dark-gril-theme.json`）。缺文件即全用默认值，不预生成。
+- 键白名单（`lib/config.js`）：`enabled` `asset` `sidebarDim` `convDim` `glow` `focusX` `focusY` `debug` `beautify`。类型或范围不符的键直接丢弃，不写盘；一次 patch 一个合法键都没有则整次拒收（HTTP 400）。
+- 写入：同目录 `.tmp` + `rename` 原子换名，失败清残片并抛错；不产生半截文件。
+- 读：坏 JSON 退化到默认值并 warn 一次，不抛错（一个观感插件不该因为配置手滑把页面弄没）。
+
+**为什么不走 `ctx.configForms`**：那套要求宿主导出 Schemastery `Config`、把值写进 profile 的 `cordis.patch.yml`，还要加一条 `@deepseek-ai/schemastery` 依赖。代价是观感开关混进用户的 profile 补丁层，回滚时要动宿主配置。这里改成插件自己的 HTTP 路由：配置始终是插件目录外的一个 JSON 文件，删掉它就回到默认值。
+
+**设置页挂载**（抄 `dsh-tdai-memory-plugin` 的公开接口，不引构建链）：
+
+- `package.json`：`exports["./client"] = "./client.js"`、`dsh.client.platform = "web"`；包已在 profile `bundles` 里，客户端模块系统只认裸包名那一行。
+- `client.js`：`window.__ModuleLoader__.load({ id, factory })` 的 lazy-CJS 形状，`require('react')` 拿 React，手写 `createElement`（两个开关不值得引 esbuild）。
+- 注册：`ctx.slots.inject('settings.section', () => ctx.slots.register({ name: 'settings.section', id: 'dsh-dark-gril-theme', order: 260, label: () => 'Dark Gril 主题' }, Card))`；`inject: ['slots']` 即可。
+- 卡片行为：GET 配置 → 渲染两个开关；改动乐观更新 + POST，失败回退旧值并显示原因；POST 成功后调 `__DGT_API__.setMode/setDebug`（第二参 `persist=false`，避免二次落盘）让页面立刻变；监听 `document` 的 `dgt-config` 事件，快捷键改了模式时开关跟着走。
+- 文案：`打光模式`（开=beautify 撤遮罩、关=dark 压暗）、`调试浮窗`。
+
+**未验**：进程里的插件模块还是旧版（POST 被忽略、文件没生成、返回体里没有 `debug`/`beautify`），说明宿主侧要重启才换代码——profile 里没有 `dsh-hmr`，文件保存不会触发重载。设置页那半边同理，要刷新页面才会拉新的 `client.js`。
 
 ## 已定稿的规格（S2 直接照做）
 
@@ -151,7 +178,7 @@
 | --- | --- | --- | --- |
 | ~~S2~~ | ~~host 状态机 + SSE 推状态 + client 桶轮播与 acting 插入~~ **已完成** | 完成 | 假快照下 5 态、整段播完、桶内不重复、acting 交替均已验；真回合端到端见下一行 |
 | S2.5 | 真装插件（`dsh plugin --profile web add`）+ 真实回合端到端 | 0.5h | 一次真实回合能在页面上看到 thinking→speaking→idle 的自动切换；`/state` SSE 连上且不断流 |
-| S3 | 设置页开关 + `Ctrl+Alt+B` + 配置文件 | 1h | 关掉后无残留、刷新后状态保持 |
+| S3 | 设置页开关 + `Ctrl+Alt+B` + 配置文件 | 实现完成 | 关掉后无残留、刷新后状态保持 —— 代码与单测已齐，差重启后真机点一遍 |
 | S4 | 脚本化验收（5 态截图 + 右栏取色 + 帧时间 + 残留检测） | 1.5h | 脚本一条命令出报告 |
 | S5 | 打磨（光斑与人物过渡、素材缺失兜底文案） | 1h | 用户主观通过 |
 

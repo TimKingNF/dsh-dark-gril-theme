@@ -19,6 +19,7 @@ import { createReadStream, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { DEFAULTS, readConfig, writeConfig } from './lib/config.js'
 import { POOLS } from './lib/pools.js'
 import { contentTypeFor, parseRange, resolveInside, toInlineJson } from './lib/route.js'
 import { installStateService } from './lib/state-service.js'
@@ -46,48 +47,15 @@ export const STATE_JSON_ROUTE = `${ROUTE_PREFIX}/state.json`
 /** 页面侧读取配置用的全局名。 */
 export const BOOTSTRAP_GLOBAL = '__DGT__'
 
-/** 默认配置。阶段一只需要这几项。 */
-const DEFAULTS = {
-  enabled: true,
-  /** 固定播放的素材（assets 目录下的文件名）。 */
-  asset: 'idle.webm',
-  /** 侧栏/对话区压暗强度，0–1。 */
-  sidebarDim: 0.48,
-  convDim: 0.54,
-  /** 右区光源强度倍率。 */
-  glow: 1,
-  /** 视频对焦点（object-position），人物偏右。 */
-  focusX: 78,
-  focusY: 40,
-}
-
 /**
- * 运行期配置：`$DSH_HOME/dsh-dark-gril-theme.json` 存在时覆盖默认值。
- * 只接受已知键，坏文件不抛错。
+ * 读运行期配置。真相源与校验规则都在 lib/config.js：`$DSH_HOME/dsh-dark-gril-theme.json`
+ * 存在时覆盖默认值，坏文件、坏键都退化成默认值，不抛错。
  *
  * @param {string} dshHome
  * @returns {Record<string, unknown>}
  */
 function loadConfig(dshHome) {
-  const config = { ...DEFAULTS }
-  const file = path.join(dshHome, 'dsh-dark-gril-theme.json')
-  let raw
-  try {
-    raw = readFileSync(file, 'utf8')
-  } catch {
-    return config
-  }
-  try {
-    const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      for (const key of Object.keys(DEFAULTS)) {
-        if (key in parsed) config[key] = parsed[key]
-      }
-    }
-  } catch (error) {
-    warn(`配置解析失败，使用默认值：${String(error)}`)
-  }
-  return config
+  return readConfig(dshHome, warn)
 }
 
 /**
@@ -197,6 +165,58 @@ function serveAsset(req, res, fileName) {
   createReadStream(target, { start: range.start, end: range.end }).pipe(res)
 }
 
+/** 一次写入请求体的上限，够两个开关，挡住误发的整文件。 */
+const CONFIG_BODY_LIMIT = 64 * 1024
+
+/**
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} status
+ * @param {unknown} body
+ */
+function sendJson(res, status, body) {
+  res.statusCode = status
+  res.setHeader('Content-Type', 'application/json; charset=utf-8')
+  res.setHeader('Cache-Control', 'no-store')
+  res.end(JSON.stringify(body))
+}
+
+/**
+ * 读 JSON 请求体；超限或解析失败返回 `undefined`。
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {Promise<unknown>}
+ */
+function readJsonBody(req) {
+  return new Promise((resolve) => {
+    /** @type {Buffer[]} */
+    const chunks = []
+    let size = 0
+    let done = false
+    const finish = (value) => {
+      if (done) return
+      done = true
+      resolve(value)
+    }
+    req.on('data', (chunk) => {
+      size += chunk.length
+      if (size > CONFIG_BODY_LIMIT) {
+        finish(undefined)
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      try {
+        finish(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      } catch {
+        finish(undefined)
+      }
+    })
+    req.on('error', () => finish(undefined))
+  })
+}
+
 /**
  * 生成注入行。样式必须排在脚本之前（两种渲染器都按数组顺序应用，没有按 kind 排序）。
  *
@@ -239,6 +259,8 @@ export function apply(ctx) {
         videoPrefix: VIDEO_PREFIX,
         stateUrl: STATE_ROUTE,
         stateJsonUrl: STATE_JSON_ROUTE,
+        // 页面侧改配置（设置卡片、Ctrl+Alt+M）都往这里 POST，不各自留一份值。
+        configUrl: CONFIG_ROUTE,
       }
       const rows = buildInjectionRows({
         clientConfig,
@@ -265,12 +287,27 @@ export function apply(ctx) {
         child.webServer.register({
           kind: 'exact',
           path: CONFIG_ROUTE,
-          handler: (req, res) => {
-            const config = loadConfig(dshHome)
-            res.statusCode = 200
-            res.setHeader('Content-Type', 'application/json; charset=utf-8')
-            res.setHeader('Cache-Control', 'no-store')
-            res.end(JSON.stringify(config))
+          handler: async (req, res) => {
+            if (req.method === 'POST') {
+              const patch = await readJsonBody(req)
+              if (patch === undefined) {
+                sendJson(res, 400, { ok: false, error: 'bad-json' })
+                return
+              }
+              try {
+                const { rejected, config } = writeConfig(dshHome, patch, warn)
+                if (rejected) {
+                  sendJson(res, 400, { ok: false, error: 'no-valid-key', config })
+                  return
+                }
+                sendJson(res, 200, { ok: true, config })
+              } catch (error) {
+                warn(`配置写入失败：${String(error)}`)
+                sendJson(res, 500, { ok: false, error: 'write-failed' })
+              }
+              return
+            }
+            sendJson(res, 200, loadConfig(dshHome))
           },
         }),
       )

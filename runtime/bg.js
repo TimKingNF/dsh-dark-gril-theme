@@ -67,7 +67,8 @@
    */
   var DARK_RAMP =
     'linear-gradient(180deg, rgb(13,10,12) 0%, rgb(14,11,11) 40%, rgb(19,14,11) 64%, rgb(26,17,12) 83%, rgb(37,23,14) 100%)'
-  var MODE_KEY = 'dgt-mode'
+  // 模式与调试开关只存一份：$DSH_HOME 下的配置文件。页面这边不再写 localStorage，
+  // 否则「设置卡片改了」和「上一次按快捷键留下的值」会互相覆盖。
   var mode = 'dark'
   var pollTimer = null
   var sseErrors = 0
@@ -401,7 +402,7 @@
   // ── 调试浮窗 ────────────────────────────────────────
 
   function startDebug() {
-    if (!CONFIG.debug || debugEl) return
+    if (debugEl) return
     debugEl = document.createElement('div')
     debugEl.id = 'dgt-debug'
     debugText = document.createElement('pre')
@@ -625,25 +626,66 @@
     // 玻璃色阶跟着模式走：dark 用压过的色阶，beautify 换回 CSS 里的原值。
     var ramp = name === 'dark' ? DARK_RAMP : BASE_RAMP
     if (ramp) document.documentElement.style.setProperty('--dgt-sheet-ramp', ramp)
-    if (persist) {
-      try {
-        localStorage.setItem(MODE_KEY, name)
-      } catch (e) {}
-    }
+    if (persist) persistConfig({ beautify: name === 'beautify' })
     renderDebug()
+    notifyConfig()
     return mode
   }
 
   function readMode() {
-    try {
-      var saved = localStorage.getItem(MODE_KEY)
-      if (saved === 'beautify' || saved === 'dark') return saved
-    } catch (e) {}
-    return CONFIG.mode === 'beautify' ? 'beautify' : 'dark'
+    return CONFIG.beautify === true ? 'beautify' : 'dark'
   }
 
   function toggleMode() {
     return applyMode(mode === 'dark' ? 'beautify' : 'dark', true)
+  }
+
+  /**
+   * 把一次改动写回配置文件（唯一真相源）。
+   * 失败只 warn：页面侧的观感已经改了，不该因为落盘失败又弹回去。
+   */
+  function persistConfig(patch) {
+    var url = typeof CONFIG.configUrl === 'string' ? CONFIG.configUrl : ''
+    if (url === '' || typeof fetch !== 'function') return
+    try {
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+        .then(function (res) {
+          if (!res.ok) warn('配置保存失败：HTTP ' + res.status)
+        })
+        .catch(function (error) {
+          warn('配置保存失败：' + String(error))
+        })
+    } catch (error) {
+      warn('配置保存失败：' + String(error))
+    }
+  }
+
+  /** 通知同页的设置卡片：配置变了（快捷键改的那一次），让开关跟着走。 */
+  function notifyConfig() {
+    try {
+      CONFIG.debug = debugEl !== null
+      CONFIG.beautify = mode === 'beautify'
+      document.dispatchEvent(
+        new CustomEvent('dgt-config', { detail: { beautify: CONFIG.beautify, debug: CONFIG.debug } }),
+      )
+    } catch (e) {}
+  }
+
+  /**
+   * 调试浮窗开关。
+   * @param {boolean} on
+   * @param {boolean} [persist]
+   */
+  function setDebug(on, persist) {
+    if (on) startDebug()
+    else stopDebug()
+    if (persist !== false) persistConfig({ debug: on === true })
+    notifyConfig()
+    return on === true
   }
 
   function placeVideo(regionW, cssH, offsetX) {
@@ -846,7 +888,7 @@
     schedule()
     watch()
     startStateStream()
-    startDebug()
+    if (CONFIG.debug === true) startDebug()
     playClip(decideNext())
   }
 
@@ -939,6 +981,10 @@
     setState: setState,
     setMode: applyMode,
     toggleMode: toggleMode,
+    setDebug: setDebug,
+    get debug() {
+      return debugEl !== null
+    },
     get mode() {
       return mode
     },
