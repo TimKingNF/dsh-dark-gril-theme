@@ -1,10 +1,10 @@
 # 进度总结
 
-> 快照：2026-11-15 12:40（Asia/Shanghai）。提交 `d6511fb`，tag `s1-baseline`。规格修订 #2
+> 快照：2026-11-15 14:25（Asia/Shanghai）。提交 `8667280`（基线 tag `s1-baseline` = `d6511fb`）。规格修订 #6
 
 ## 一句话状态
 
-**阶段一（基本样式 + 固定视频）视觉已定稿并跑通，状态机未接。** 现在页面里播的是固定 `thinking.webm`，不随 Agent 状态变化。
+**阶段二（状态机 + 桶轮播）已实现并跑通**：host 侧订阅 `agent/status` / `agent/assistant-stream` / `tools/execute` / `approval/request`，算成 5 态推 SSE；client 侧双 video 交叉淡入、整段播完才换、桶内不连续重复、acting 与底层交替，另有 `dark`/`beautify` 双观感与调试浮窗。22 段素材全部进桶。**还没做的只有真机安装与 host→SSE 端到端**：目前所有换态都是 `setState()` 假快照驱动的。
 
 ## 目标与边界
 
@@ -23,10 +23,17 @@
 | 右侧玻璃 + 32px 收边 + 跨栏光源 | 完成 | `runtime/bg.css` `#svb-sheet` / `#svb-seam` / `#svb-glow` |
 | 深色主题强制与还原 | 完成 | `ensureDark()` / `restoreDark()` |
 | 真 DOM 联调（未装插件） | 完成 | 3099 dev server + 页面注入，`readyState 4` |
-| S2 播放层（双 video 桶轮播 + acting 交替） | 完成，待真机验收 | `runtime/bg.js` `playClip()` / `decideNext()` / `startStateStream()`；`assets/` 已备齐 22 段 |
+| S2 宿主状态机（5 态 + seq + 变化才推） | 完成 | `lib/machine.js`、`lib/state-service.js`；`tests/machine.test.mjs` 12 例 |
+| S2 桶表与不连续重复抽签 | 完成 | `lib/pools.js`；`tests/pools.test.mjs` 8 例 |
+| S2 状态通道（SSE + JSON 快照，失败转 1s 轮询） | 完成 | `index.js` `STATE_ROUTE`/`STATE_JSON_ROUTE`；SSE 带 `retry: 2000` 与 25s 心跳 |
+| S2 播放层（双 video 桶轮播 + acting 交替） | 完成，假快照验过 | `runtime/bg.js` `playClip()` / `decideNext()` / `takeNext()`；`assets/` 已备齐 22 段 |
+| 预加载（剩余 1.2s 预热到另一 video 元素） | 完成 | `warmNextClip()` / `timeupdate`；实测换片后 50ms 内 `currentTime` 已在走 |
+| 观感双模式 dark / beautify | 完成 | `DIM_MODES` + `applyMode()`，只改 CSS 变量；`Ctrl+Alt+M` |
+| dark 模式光斑与玻璃色阶一起压暗 | 完成 | `DARK_RAMP` + `--svb-glow`；左下角 p50 31.5→24.7 |
+| 调试浮窗（快照态 / 正在演 / 桶序 / 预载 / 源 / seq） | 完成 | `startDebug()` / `renderDebug()`，`CONFIG.debug` 为真时挂 `#svb-debug` |
 | 联调捷径 | 完成 | dev server 新增 `/config.json` 与 `/inject.js`，控制台一行注入 |
 
-测试：`node --test tests/host.test.mjs` → 3/3；`node --check index.js runtime/bg.js` 通过。
+测试：`node --test "tests/*.test.mjs"` → 23/23（host 3 + machine 12 + pools 8）；`node --check index.js lib/*.js runtime/bg.js` 通过。
 
 ## 已定稿的规格（S2 直接照做）
 
@@ -108,7 +115,7 @@
 - 素材：VP9 2560×1392、24fps、单段 5–6MB、22 段共 127MB。
 - 玻璃色阶：dark `rgb(13,10,12)` → `rgb(37,23,14)`（83% 处 `rgb(26,17,12)`）；beautify 用 CSS 原值 `rgb(13,10,12)` → `rgb(47,30,17)`。光源峰 `rgba(226,152,88,·)`。
 - scrim：侧栏 0.48 / 对话 0.54；最差对比度 4.69 / 5.52（正文 `#e6e6ec`），对话过 AA。
-- 接缝：220px smoothstep，接缝 1px 跳变 0.10–0.12（旧设计 91.2）。
+- 接缝：32px 软接边（原 220px）。开右侧栏时右栏左缘曾经有一根 1 设备像素白线（`border-left: 0.666667px rgba(255,255,255,0.2)`，+23 亮度），现由 `clearEdgeBorder()` 抹平，逐像素复测两侧回到 20/17/16。
 - 整屏铺满需放大 1.5×（1920×1080 级窗口），这是素材分辨率上限，不是排版选择。
 
 ## 已知限制
@@ -119,12 +126,27 @@
 4. **截不到 docked 三/四栏**：本机 dsh-better-sidebar 是浮动模式，网格第三列恒为 0。
 5. **右栏那道 1px 白边靠 DOM 现状抹除**：它来自宿主面板的 `border-left: 0.666667px rgba(255,255,255,0.2)`（DPR 1.5 下正好一个设备像素、+23 亮度）。`clearEdgeBorder()` 每次布局按坐标重扫并置 0，宿主若改用它法画边（box-shadow / 伪元素 / 背景图），这里要跟着改。
 6. **内部命名未跟随改名**：全局 `__DSH_STATE_VIDEO_BG__` / `__SVB_INSTALLED__`、元素 id `#svb-*` 仍是旧前缀。
+7. **host→SSE→client 没端到端跑过**：主机侧状态机、SSE 路由、client 消费三段各自验过（单测 / dev server `/config.json`+`/inject.js` / 页面里 `setState()` 假快照），但没有一次真实的 Agent 回合经 SSE 推过来驱动换态。装插件后第一件事就是跑这个。
+8. **`beautify` 下长文可读性未人眼判**：对话列零遮罩，文字直接压在人物上，只有用户主观能定。
+
+## 提交记录
+
+| 提交 | 内容 |
+| --- | --- |
+| `d6511fb` | 阶段一：固定视频背景 + 左中铺满 + 右侧自建玻璃（tag `s1-baseline`） |
+| `1a6df31` | docs：进度总结首版 |
+| `316b8bd` | 阶段二：状态机 + 桶轮播 + 预加载 + 调试浮窗（含 32px 接缝修复与 1px 白边抹除） |
+| `a00ae6b` | 观感双模式 dark / beautify |
+| `9a014a2` + `b42468f` | 光斑范围与衰减（五档 + 宽铺垫），docs 修订 #5 |
+| `44b452c` | 光斑随模式变暗（第一版，只动 `--svb-glow`） |
+| `8667280` | 取代上一条：dark 专用暗色阶才是真正的杠杆，glow 定 0.25 |
 
 ## 下一步
 
 | 阶段 | 内容 | 预估 | 出口判据 |
 | --- | --- | --- | --- |
-| S2 | host 状态机 + SSE 推状态 + client 桶轮播与 acting 插入 | 3h | 受控回合能依次出现 5 态；每段完整播完；同桶相邻两段不重复；长工具能看到 acting 交替 |
+| ~~S2~~ | ~~host 状态机 + SSE 推状态 + client 桶轮播与 acting 插入~~ **已完成** | 完成 | 假快照下 5 态、整段播完、桶内不重复、acting 交替均已验；真回合端到端见下一行 |
+| S2.5 | 真装插件（`dsh plugin --profile web add`）+ 真实回合端到端 | 0.5h | 一次真实回合能在页面上看到 thinking→speaking→idle 的自动切换；`/state` SSE 连上且不断流 |
 | S3 | 设置页开关 + `Ctrl+Alt+B` + 配置文件 | 1h | 关掉后无残留、刷新后状态保持 |
 | S4 | 脚本化验收（5 态截图 + 右栏取色 + 帧时间 + 残留检测） | 1.5h | 脚本一条命令出报告 |
 | S5 | 打磨（光斑与人物过渡、素材缺失兜底文案） | 1h | 用户主观通过 |

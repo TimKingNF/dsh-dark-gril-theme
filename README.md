@@ -2,7 +2,7 @@
 
 DeepSeek Harness 的暗色主题插件：左栏 + 对话区播放背景视频，右侧工作台自建不透明玻璃（竖向渐变 + 跨栏光源），接缝在视频一侧压暗收边。
 
-当前进度：**阶段一（固定视频 + 主题材质）**视觉定稿，状态机还没接。详见 [docs/status.md](docs/status.md)。
+当前进度：**阶段二已实现**——host 侧 5 态状态机推 SSE，页面侧双 video 桶轮播（22 段全投用、整段播完才换、桶内不连续重复、acting 与底层交替）、剩余 1.2s 预加载、`dark`/`beautify` 双观感、调试浮窗。剩下的是真机安装与端到端验收。详见 [docs/status.md](docs/status.md)。
 
 ## 结构
 
@@ -21,7 +21,7 @@ DeepSeek Harness 的暗色主题插件：左栏 + 对话区播放背景视频，
 ## 跑
 
 ```bash
-node --test tests/host.test.mjs
+node --test "tests/*.test.mjs"
 node --check runtime/bg.js
 ```
 
