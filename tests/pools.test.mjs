@@ -10,6 +10,18 @@ test('22 段素材全部进了桶，没有遗漏也没有重复归属错误', ()
   assert.ok(ALL_ASSETS.includes('acting.webm'))
 })
 
+test('speaking 12 段并进 thinking 桶，listening 三段并进 acting 桶', () => {
+  assert.equal(POOLS.thinking.length, 13)
+  assert.ok(POOLS.thinking.includes('thinking.webm'))
+  assert.ok(POOLS.thinking.includes('speaking-explain.webm'))
+  assert.equal(POOLS.acting.length, 4)
+  for (const name of ['acting.webm', 'listening.webm', 'listening-focus.webm', 'listening-nod.webm']) {
+    assert.ok(POOLS.acting.includes(name), `acting 桶缺 ${name}`)
+  }
+  assert.deepEqual([...POOLS.approval], ['approval.webm'])
+  assert.equal('speaking' in POOLS, false)
+})
+
 test('idle 桶按「是否新会话」分叉', () => {
   assert.deepEqual([...poolFor('idle', { isNewSession: true })], ['idle.webm'])
   const normal = poolFor('idle', { isNewSession: false })
@@ -48,9 +60,15 @@ test('不连续重复在真实随机下也成立（抽 200 次）', () => {
 })
 
 test('单段桶只能重播，返回 0', () => {
-  assert.equal(pickNext(POOLS.thinking, 0), 0)
-  assert.equal(pickNext(POOLS.acting, 0), 0)
   assert.equal(pickNext(POOLS.idleNew, 0), 0)
+  assert.equal(pickNext(POOLS.approval, 0), 0)
+})
+
+test('13 段的 thinking 桶任意上一段都有别的可抽', () => {
+  for (let last = 0; last < POOLS.thinking.length; last += 1) {
+    const picked = pickNext(POOLS.thinking, last, () => 0)
+    assert.notEqual(picked, last)
+  }
 })
 
 test('上一段索引越界或缺失时当作首次抽取', () => {

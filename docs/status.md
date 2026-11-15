@@ -1,14 +1,14 @@
 # 进度总结
 
-> 快照：2026-11-15 15:32（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #9（调试浮窗 v2：拖动 / 分栏 / 监听态与预载可视化）
+> 快照：2026-11-15 15:45（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #10（4 态重排：speaking 并入 thinking，listening 并入 acting）
 
 ## 一句话状态
 
-**阶段二（状态机 + 桶轮播）已实现并跑通**：host 侧订阅 `agent/status` / `agent/assistant-stream` / `tools/execute` / `approval/request`，算成 5 态推 SSE；client 侧双 video 交叉淡入、整段播完才换、桶内不连续重复、acting 与底层交替，另有 `dark`/`beautify` 双观感与调试浮窗。22 段素材全部进桶。**还没做的只有真机安装与 host→SSE 端到端**：目前所有换态都是 `setState()` 假快照驱动的。
+**阶段二（状态机 + 桶轮播）已实现并跑通**：host 侧订阅 `agent/status` / `agent/assistant-stream` / `tools/execute` / `approval/request`，算成 4 态（idle / thinking / acting / approval）推 SSE；client 侧双 video 交叉淡入、整段播完才换、桶内不连续重复、acting 与底层交替，另有 `dark`/`beautify` 双观感与调试浮窗。22 段素材全部进桶。**还没做的只有真机安装与 host→SSE 端到端**：目前所有换态都是 `setState()` 假快照驱动的。
 
 ## 目标与边界
 
-- 目标：DSH Web GUI 的背景视频按 Agent 执行状态切换（idle / thinking / speaking / acting / approval）。22 段素材全部进桶。
+- 目标：DSH Web GUI 的背景视频按 Agent 执行状态切换（idle / thinking / acting / approval）。22 段素材全部进桶。
 - 视觉：视频只铺「左侧栏 + 对话区」；第三栏起自建不透明玻璃（竖向渐变 + 一盏跨栏光源），第五、第六栏自动同款。
 - 不做：不改 DSH 原生代码、不打补丁到宿主 `node_modules`、不侵入右栏内容区（只画它背后的层）。
 
@@ -23,7 +23,7 @@
 | 右侧玻璃 + 32px 收边 + 跨栏光源 | 完成 | `runtime/bg.css` `#dgt-sheet` / `#dgt-seam` / `#dgt-glow` |
 | 深色主题强制与还原 | 完成 | `ensureDark()` / `restoreDark()` |
 | 真 DOM 联调（未装插件） | 完成 | 3099 dev server + 页面注入，`readyState 4` |
-| S2 宿主状态机（5 态 + seq + 变化才推） | 完成 | `lib/machine.js`、`lib/state-service.js`；`tests/machine.test.mjs` 12 例 |
+| S2 宿主状态机（4 态 + seq + 变化才推） | 完成 | `lib/machine.js`、`lib/state-service.js`；`tests/machine.test.mjs` 11 例 |
 | S2 桶表与不连续重复抽签 | 完成 | `lib/pools.js`；`tests/pools.test.mjs` 8 例 |
 | S2 状态通道（SSE + JSON 快照，失败转 1s 轮询） | 完成 | `index.js` `STATE_ROUTE`/`STATE_JSON_ROUTE`；SSE 带 `retry: 2000` 与 25s 心跳 |
 | S2 播放层（双 video 桶轮播 + acting 交替） | 完成，假快照验过 | `runtime/bg.js` `playClip()` / `decideNext()` / `takeNext()`；`assets/` 已备齐 22 段 |
@@ -38,7 +38,7 @@
 | S3 快捷键与开关同源 | 完成 | `Ctrl+Alt+M` 与设置页开关都走 POST 落盘；页面内用 `dgt-config` 事件双向同步 |
 | S3 观感不再写 localStorage | 完成 | 删掉 `dgt-mode`，模式只读 `$DSH_HOME/dsh-dark-gril-theme.json` |
 
-测试：`node --test "tests/*.test.mjs"` → 30/30（host 3 + machine 12 + pools 8 + config 7）；`node --check index.js client.js lib/*.js runtime/bg.js` 通过。
+测试：`node --test "tests/*.test.mjs"` → 31/31（host 3 + machine 11 + pools 10 + config 7）；`node --check index.js client.js lib/*.js runtime/bg.js` 通过。
 
 
 ## S3 配置层（修订 #7）
@@ -74,8 +74,8 @@
 
 > 修订 #3 · 2026-11-15 12:40。接缝收窄。开右侧边栏时 `videoRight` 落在两栏之间，原 220px 压暗带在深色画面上就是一条可辨的暗带（用户 12:31 截图指出「一道明显的明暗分界」）。改：`SEAM_WIDTH` 220→32、`GLOW_LEAD` 200→32、`#dgt-sheet` 左缘 `inset 1px 0 0` 高光删除、sheet 左移 2px 压住亚像素缝、新增 `clearEdgeBorder()` 按坐标抹掉右栏面板自带的 `border-left`（不猜 CSS Module 类名）。注意它必须用 `elementsFromPoint` 扫：这条边框挂在**兄弟节点**上，交界点本身是个透明的拖拽把手，从交点往祖先走永远找不到它——第一版就是这么漏掉的，肉眼看仍是一根从顶到底的白线。
 
-**状态词表（5 态）**：`idle` / `thinking` / `speaking` / `acting` / `approval`。
-`done` 不再是独立态，三段素材并入 idle 池；`error` 留接口不启用。
+**状态词表（4 态）**：`idle` / `thinking` / `acting` / `approval`。
+`done` 不再是独立态，三段素材并入 idle 池；`speaking` 按修订 #10 退休（素材并入 thinking）；`error` 留接口不启用。
 
 **态 → 轮播桶**（22 段全部投用）
 
@@ -83,10 +83,9 @@
 | --- | --- | --- | --- |
 | idle（新会话） | `idle` | 1 | 6.00 |
 | idle（非新会话） | `idle` `done` `done-soft` `done-confirm` | 4 | 6.00 / 6.00 / 6.04 / 6.04 |
-| thinking | `thinking` | 1 | 6.00 |
-| speaking | `speaking` + 11 个 `speaking-*` | 12 | 3.08 / 6.04×11 |
-| acting | `acting` | 1 | 3.08 |
-| approval | `approval` `listening` `listening-focus` `listening-nod` | 4 | 6.00 / 6.00 / 6.04 / 6.04 |
+| thinking | `thinking` + `speaking` + 11 个 `speaking-*` | 13 | 6.00 / 3.08 / 6.04×11 |
+| acting | `acting` `listening` `listening-focus` `listening-nod` | 4 | 3.08 / 6.00 / 6.04 / 6.04 |
+| approval | `approval` | 1 | 6.00 |
 
 新会话 = 该会话尚无任何 `turn/start`（hero 空白态）。跑过第一个回合后永久使用非新会话池。
 
@@ -102,9 +101,8 @@
 
 1. `approval/request` 未决 → `approval`，硬切，可打断当前段。
 2. 前台工具 `tools/execute` 持续 ≥3s → `acting`（只在边界生效，见下）。
-3. `text-delta` 流 → `speaking`。
-4. `reasoning-delta` 流；或 `agent/status:running` 但无细信号 → `thinking`。
-5. 其余 → `idle`。
+3. `agent/status:running`、`assistant-stream` 开着、工具刚起头 → `thinking`。正文与推理一视同仁，不再按 chunk 类型分叉。
+4. 其余 → `idle`。
 
 **acting 插入规则**
 
@@ -117,13 +115,13 @@
 **聚合参数**（`agent/assistant-stream` 逐 chunk 发射，未节流，必须自聚合）
 
 - host 侧 16ms 合帧，SSE 推送上限 10Hz。
-- `text-delta` 连续 ≥300ms 或 ≥8 个 chunk → `speaking`；`reasoning-delta` 同规则 → `thinking`。
+- 成串阈值（300ms / 8 chunk）已随 `speaking` 退休一并删除：现在只要回合在跑或流开着就是 `thinking`，chunk 只用来触发节拍。
 - 交叉淡入 400ms。
 
 **已知取舍**
 
 - done 三档语义消失：不再区分「有审批 / 无工具 / 其余」，四段全随机。
-- speaking 的结构判据（工具后汇报→confirm、首段→explain）让位给随机轮播，12 段全用，语义变弱。
+- 12 段 speaking 素材并进 thinking 后纯随机轮播，与内容是推理还是正文无关（原结构判据在并入前就已废弃）。
 - 最小驻留 3s 删除，驻留由素材时长本身承担。
 - 预载提前量 1.2s（`timeupdate` 里 `duration - currentTime <= 1.2` 触发预热）：本机 canplay 约 0.2s，留量是为了慢盘与首轮冷缓存。
 
@@ -156,6 +154,12 @@
 > ⑤ 踩坑：第一版兜底拿 `currentClip !== null` 当哨兵，而 `currentClip` 初值是空串（`var currentClip = ''`）——守卫第一次就早退，日志里连「起播」都不出现。改成独立布尔 `hasStarted`（`commit()` 置真、`disable()` 归假）后才跑通。**教训：用「值不是空」代替「状态已发生」，在初值是空串的变量上必然失灵。**
 > ⑥ 真机：拖动（合成 PointerEvent）后 rect 从 [12,196] → [262,76]、`sessionStorage` 记到 `{"left":262,"top":75.5}`；折叠切换 `.is-collapsed` 与 `display:none` 正确；事件流水实时滚动（`15:25:42 监听态 acting → thinking · sse`）。播放卡与预载卡在本窗口恒空——原因是 `document.visibilityState === 'hidden'`，Chrome 推迟媒体加载（见已知限制 3），不是代码问题。
 
+> 修订 #10 · 2026-11-15 15:45。4 态重排。用户原话（15:40）：「现在先把 speaking 相关的素材放入 thinking 状态中，在 agent 输出的时候随机不连续的重播，原来 speaking 监听的宿主信号不再监听。在 acting 的时候，除了 acting 素材，再加上 listening / listening-focus / listening-nod 素材。」
+> ① 态表 5 → 4：speaking 整态退休，STATES = [idle, thinking, acting, approval]。text-delta 不再单独成态，「在出正文」与「在推理」都归 thinking。
+> ② 桶重排（22 段不增不减）：thinking 1 → 13 段（并入 12 段 speaking）；acting 1 → 4 段（并入 listening 三段）；approval 4 → 1 段（只剩 approval.webm，单段只能重播）。ALL_ASSETS 仍 22，无孤儿片。
+> ③ 删掉的代码：STREAK_MS / STREAK_CHUNKS / qualified() / textStreak / reasonStreak。feedChunk 保留（宿主接线不改）但只触发一次重算；isBusy() 改为 approvalPending || running || toolSince >= 0 || streamOpen。成串阈值是为「区分正文/推理」而生的，这个区分本身被取消，阈值就没有存在意义。
+> ④ 已知后果：thinking 桶从「单段只能重播」变成 13 段随机轮播，同一态会长短片混播（3.08s 与 6.04s 交替）；approval 从 4 段变单段，等审批时画面固定。acting 的 3s 门槛不变，所以那 4 段仍只在长工具里出现。
+> ⑤ 未碰：runtime/bg.js 一行没改——桶映射只有 lib/pools.js 一份真相，页面侧通过 __DGT__.pools 拿。但 lib/* 属宿主侧，必须重启 DSH 才生效。
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
 **状态源**：`agent/assistant-stream` + `tools/execute` + `approval/request`（waterfall，必须 `return next()`）+ `agent/status` / `uiSession.sessionStatus`（兜底纠偏）。
@@ -194,13 +198,14 @@
 | `93582d5` | S3：配置单一真相源（`lib/config.js`）+ 设置页两个开关（`client.js`） |
 | `7935e9d` | S3：设置页真机验证通过 + 修深色面板上的文字对比度 |
 | `475468c` | 调试浮窗 v2（拖动 / 五栏卡 / 事件流水）+ `hasStarted` 哨兵与起播兜底 |
+| `72078cb` | 修订 #10：4 态重排（speaking → thinking，listening → acting），单测同步 |
 
 ## 下一步
 
 | 阶段 | 内容 | 预估 | 出口判据 |
 | --- | --- | --- | --- |
 | ~~S2~~ | ~~host 状态机 + SSE 推状态 + client 桶轮播与 acting 插入~~ **已完成** | 完成 | 假快照下 5 态、整段播完、桶内不重复、acting 交替均已验；真回合端到端见下一行 |
-| S2.5 | 真装插件（`dsh plugin --profile web add`）+ 真实回合端到端 | 0.5h | 一次真实回合能在页面上看到 thinking→speaking→idle 的自动切换；`/state` SSE 连上且不断流 |
+| S2.5 | 真装插件（`dsh plugin --profile web add`）+ 真实回合端到端 | 0.5h | 一次真实回合能在页面上看到 thinking→acting→thinking→idle 的自动切换；`/state` SSE 连上且不断流 |
 | ~~S3~~ | ~~设置页开关 + `Ctrl+Alt+B` + 配置文件~~ **已完成** | 完成 | 关掉后无残留、刷新后状态保持 —— 真机点过开关，配置文件与页面运行时双向一致 |
 | S3.5 | 调试浮窗 v2（拖动 / 分栏 / 监听态 / 预载可视化） | 完成 | 真机验过拖动、折叠、事件流水；播放与预载卡待用户前台窗口确认 |
 | S4 | 脚本化验收（5 态截图 + 右栏取色 + 帧时间 + 残留检测） | 1.5h | 脚本一条命令出报告 |
