@@ -44,7 +44,7 @@ export const STATE_ROUTE = `${ROUTE_PREFIX}/state`
 /** 状态快照（JSON，SSE 断掉时页面降级轮询它）。 */
 export const STATE_JSON_ROUTE = `${ROUTE_PREFIX}/state.json`
 /** 页面侧读取配置用的全局名。 */
-export const BOOTSTRAP_GLOBAL = '__DSH_STATE_VIDEO_BG__'
+export const BOOTSTRAP_GLOBAL = '__DGT__'
 
 /** 默认配置。阶段一只需要这几项。 */
 const DEFAULTS = {

@@ -34,7 +34,7 @@ const s=document.createElement('script');s.src='http://127.0.0.1:3099/inject.js'
 看两种观感（只改两个 CSS 变量，切换瞬时、素材无损）：
 
 ```js
-__DSH_STATE_VIDEO_BG_API__.toggleMode()   // 或按 Ctrl+Alt+M，选择记在 localStorage['svb-mode']
+__DGT_API__.toggleMode()   // 或按 Ctrl+Alt+M，选择记在 localStorage['dgt-mode']
 ```
 
 `dark` 压侧栏 0.48 / 对话 0.54 保证文字对比度；`beautify` 全撤，恢复素材原本的肤色打光——代价是对话文字直接压在人物上。
@@ -43,7 +43,7 @@ __DSH_STATE_VIDEO_BG_API__.toggleMode()   // 或按 Ctrl+Alt+M，选择记在 lo
 
 ```js
 for (const s of ['idle','thinking','speaking','acting','approval']) {
-  __DSH_STATE_VIDEO_BG_API__.setState(s); await new Promise(r=>setTimeout(r,7000))
+  __DGT_API__.setState(s); await new Promise(r=>setTimeout(r,7000))
 }
 ```
 

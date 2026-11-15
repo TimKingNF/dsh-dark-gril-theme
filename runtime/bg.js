@@ -14,13 +14,13 @@
 ;(function () {
   'use strict'
 
-  if (globalThis.__SVB_INSTALLED__) return
-  globalThis.__SVB_INSTALLED__ = true
+  if (globalThis.__DGT_INSTALLED__) return
+  globalThis.__DGT_INSTALLED__ = true
 
-  var CONFIG = globalThis.__DSH_STATE_VIDEO_BG__
+  var CONFIG = globalThis.__DGT__
   if (!CONFIG || typeof CONFIG !== 'object') CONFIG = {}
 
-  var HTML_ATTR = 'data-svb'
+  var HTML_ATTR = 'data-dgt'
   /** 接缝收边带宽度：只做 32px 的软接边。再宽（原 220px）就成了画面里一条可辨的暗带。 */
   var SEAM_WIDTH = 32
   /** 光源左缘与收边带对齐：灯停在右区里，不越过接缝探进视频。 */
@@ -61,13 +61,13 @@
    * dark 模式专用的更暗色阶：只把 83% 与 100% 两档压下来（32,21,14 → 26,17,12、
    * 47,30,17 → 37,23,14），中上部原样。
    *
-   * 为什么动这个而不是只动 --svb-glow：实测面板左下角那块，0.46 → 0.10 才降
+   * 为什么动这个而不是只动 --dgt-glow：实测面板左下角那块，0.46 → 0.10 才降
    * 5.5 级（41.0 → 35.5），因为那块亮度里八成来自玻璃自身底色的暖色，
    * 光斑只占小头。要让 dark 真的暗一档，只能压这两个色阶。
    */
   var DARK_RAMP =
     'linear-gradient(180deg, rgb(13,10,12) 0%, rgb(14,11,11) 40%, rgb(19,14,11) 64%, rgb(26,17,12) 83%, rgb(37,23,14) 100%)'
-  var MODE_KEY = 'svb-mode'
+  var MODE_KEY = 'dgt-mode'
   var mode = 'dark'
   var pollTimer = null
   var sseErrors = 0
@@ -228,7 +228,7 @@
   function makeVideoElement(id) {
     var el = document.createElement('video')
     el.id = id
-    el.className = 'svb-video'
+    el.className = 'dgt-video'
     el.muted = true
     el.defaultMuted = true
     el.playsInline = true
@@ -403,7 +403,7 @@
   function startDebug() {
     if (!CONFIG.debug || debugEl) return
     debugEl = document.createElement('div')
-    debugEl.id = 'svb-debug'
+    debugEl.id = 'dgt-debug'
     debugText = document.createElement('pre')
     debugEl.appendChild(debugText)
     document.body.appendChild(debugEl)
@@ -445,29 +445,29 @@
     if (host) return
 
     var stage = document.createElement('div')
-    stage.id = 'svb-stage'
+    stage.id = 'dgt-stage'
 
     pools = normalizePools()
     for (var slot = 0; slot < 2; slot += 1) {
-      var el = makeVideoElement('svb-video-' + (slot === 0 ? 'a' : 'b'))
+      var el = makeVideoElement('dgt-video-' + (slot === 0 ? 'a' : 'b'))
       videos.push(el)
       stage.appendChild(el)
     }
     video = videos[0]
 
     var glass = document.createElement('div')
-    glass.id = 'svb-glass'
+    glass.id = 'dgt-glass'
 
     scrimSide = document.createElement('div')
-    scrimSide.id = 'svb-scrim-side'
+    scrimSide.id = 'dgt-scrim-side'
     scrimConv = document.createElement('div')
-    scrimConv.id = 'svb-scrim-conv'
+    scrimConv.id = 'dgt-scrim-conv'
     sheet = document.createElement('div')
-    sheet.id = 'svb-sheet'
+    sheet.id = 'dgt-sheet'
     seam = document.createElement('div')
-    seam.id = 'svb-seam'
+    seam.id = 'dgt-seam'
     glow = document.createElement('div')
-    glow.id = 'svb-glow'
+    glow.id = 'dgt-glow'
 
     glass.appendChild(scrimSide)
     glass.appendChild(scrimConv)
@@ -483,14 +483,14 @@
 
     if (typeof CONFIG.focusX === 'number' && typeof CONFIG.focusY === 'number') {
       document.documentElement.style.setProperty(
-        '--svb-focus',
+        '--dgt-focus',
         CONFIG.focusX + '% ' + CONFIG.focusY + '%',
       )
     }
     if (typeof CONFIG.sidebarDim === 'number') DIM_MODES.dark.side = CONFIG.sidebarDim
     if (typeof CONFIG.convDim === 'number') DIM_MODES.dark.conv = CONFIG.convDim
     if (typeof CONFIG.glow === 'number') DIM_MODES.dark.glow = CONFIG.glow
-    BASE_RAMP = getComputedStyle(document.documentElement).getPropertyValue('--svb-sheet-ramp').trim()
+    BASE_RAMP = getComputedStyle(document.documentElement).getPropertyValue('--dgt-sheet-ramp').trim()
     applyMode(readMode(), false)
   }
 
@@ -597,7 +597,7 @@
     for (var i = 0; i < stack.length; i += 1) {
       var el = stack[i]
       if (!el || el.nodeType !== 1 || !el.style) continue
-      if (String(el.id || '').indexOf('svb-') === 0) continue
+      if (String(el.id || '').indexOf('dgt-') === 0) continue
       var rect = el.getBoundingClientRect()
       if (Math.abs(rect.left - x) > 1.5) continue
       var style = getComputedStyle(el)
@@ -610,7 +610,7 @@
   /**
    * 观感模式：dark / beautify。
    *
-   * 只改两个 CSS 变量（`--svb-side-dim` / `--svb-conv-dim`），不动 DOM，也不碰视频本身——
+   * 只改两个 CSS 变量（`--dgt-side-dim` / `--dgt-conv-dim`），不动 DOM，也不碰视频本身——
    * 所以切换是瞬时的、无损的、可逆的：素材一个像素都没被重新编码。
    * dark 压 0.48/0.54 保证文字对比度；beautify 全撤，恢复素材原本的肤色和打光。
    */
@@ -618,13 +618,13 @@
     var name = next === 'beautify' ? 'beautify' : 'dark'
     var dims = DIM_MODES[name] || DIM_MODES.dark
     mode = name
-    document.documentElement.setAttribute('data-svb-mode', name)
-    document.documentElement.style.setProperty('--svb-side-dim', String(dims.side))
-    document.documentElement.style.setProperty('--svb-conv-dim', String(dims.conv))
-    document.documentElement.style.setProperty('--svb-glow', String(dims.glow))
+    document.documentElement.setAttribute('data-dgt-mode', name)
+    document.documentElement.style.setProperty('--dgt-side-dim', String(dims.side))
+    document.documentElement.style.setProperty('--dgt-conv-dim', String(dims.conv))
+    document.documentElement.style.setProperty('--dgt-glow', String(dims.glow))
     // 玻璃色阶跟着模式走：dark 用压过的色阶，beautify 换回 CSS 里的原值。
     var ramp = name === 'dark' ? DARK_RAMP : BASE_RAMP
-    if (ramp) document.documentElement.style.setProperty('--svb-sheet-ramp', ramp)
+    if (ramp) document.documentElement.style.setProperty('--dgt-sheet-ramp', ramp)
     if (persist) {
       try {
         localStorage.setItem(MODE_KEY, name)
@@ -931,7 +931,7 @@
     enable()
   }
 
-  globalThis.__DSH_STATE_VIDEO_BG_API__ = {
+  globalThis.__DGT_API__ = {
     enable: enable,
     disable: disable,
     toggle: toggle,

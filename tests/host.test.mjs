@@ -80,8 +80,8 @@ test('注入行：样式在前、脚本在后，且带视频地址与配置全�
   assert.equal(table.length, 2)
   assert.equal(table[0].kind, 'style')
   assert.equal(table[1].kind, 'script')
-  assert.match(table[0].text, /#svb-stage/u)
-  assert.match(table[1].text, /__SVB_INSTALLED__/u)
+  assert.match(table[0].text, /#dgt-stage/u)
+  assert.match(table[1].text, /__DGT_INSTALLED__/u)
   assert.ok(table[1].text.includes(BOOTSTRAP_GLOBAL))
   assert.match(table[1].text, /\/dsh-dark-gril-theme\/videos\/idle\.webm/u)
   // 绝不出现 script-src：它在桌面壳上失败会打掉 BOOT_READY

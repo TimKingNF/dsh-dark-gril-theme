@@ -2,8 +2,8 @@
  * dsh-state-video-bg —— 页面侧样式（阶段一）。
  *
  * 三层从后到前：
- *   #svb-stage (z-index:-2)  视频（.svb-video ×2 交叉淡入），只铺前两栏，前两栏各压一层暗蒙版
- *   #svb-glass (z-index:-1)  接缝收边 + 右侧整块玻璃 + 跨栏光源
+ *   #dgt-stage (z-index:-2)  视频（.dgt-video ×2 交叉淡入），只铺前两栏，前两栏各压一层暗蒙版
+ *   #dgt-glass (z-index:-1)  接缝收边 + 右侧整块玻璃 + 跨栏光源
  *   #root 内的应用内容       原样在上
  *
  * 因为两层都用负 z-index，应用内容（含 body 上的 portal）永远在上面，
@@ -11,19 +11,19 @@
  *
  * 右区几何（宽度全部由 bg.js 的 applyLayout() 写入，样式里不认"第几栏"）：
  *   videoRight = 侧栏 + 对话区的右缘
- *   #svb-seam   [videoRight-32, videoRight)    收边带，32px 软接边，不进右栏
- *   #svb-sheet  [videoRight, 窗口右缘]          不透明玻璃
- *   #svb-glow   [videoRight-32, 窗口右缘]       一盏灯，只在右区，不再探进视频
+ *   #dgt-seam   [videoRight-32, videoRight)    收边带，32px 软接边，不进右栏
+ *   #dgt-sheet  [videoRight, 窗口右缘]          不透明玻璃
+ *   #dgt-glow   [videoRight-32, 窗口右缘]       一盏灯，只在右区，不再探进视频
  */
 
 /* 画布底色必须让开：主题把不透明底色画在 html/body 和 --dsw-alias-bg-base 上，
    不让开的话视频永远被盖住。 */
-html[data-svb='on'],
-html[data-svb='on'] body {
+html[data-dgt='on'],
+html[data-dgt='on'] body {
   background-color: transparent !important;
 }
 
-html[data-svb='on'] body {
+html[data-dgt='on'] body {
   --dsw-alias-bg-base: transparent !important;
   --dsw-specific-sidebar-fill: transparent !important;
 }
@@ -31,7 +31,7 @@ html[data-svb='on'] body {
 /* 右区玻璃的竖向色阶：参考条带实测取色，不要凭感觉改。
    只留这一个变量——收边带必须和玻璃逐像素同色，否则接缝处又会出一条带子。 */
 :root {
-  --svb-sheet-ramp: linear-gradient(
+  --dgt-sheet-ramp: linear-gradient(
     180deg,
     rgb(13, 10, 12) 0%,
     rgb(14, 11, 11) 40%,
@@ -41,7 +41,7 @@ html[data-svb='on'] body {
   );
 }
 
-#svb-stage {
+#dgt-stage {
   position: fixed;
   inset: 0;
   z-index: -2;
@@ -52,7 +52,7 @@ html[data-svb='on'] body {
   background: rgb(11, 9, 10);
 }
 
-#svb-glass {
+#dgt-glass {
   position: fixed;
   inset: 0;
   z-index: -1;
@@ -61,7 +61,7 @@ html[data-svb='on'] body {
 }
 
 /* 双 video 共用一套几何：换素材靠 data-shown 在两个元素间迁移，不 seek、不设 loop。 */
-.svb-video {
+.dgt-video {
   position: absolute;
   top: 0;
   left: 0;
@@ -69,24 +69,24 @@ html[data-svb='on'] body {
   width: 100%;
   object-fit: cover;
   /* 人物偏右：焦点由 JS 按配置写入 */
-  object-position: var(--svb-focus, 78% 40%);
+  object-position: var(--dgt-focus, 78% 40%);
   opacity: 0;
   /* 400ms 与状态机的交叉淡入同一档，改一处就要改两处 */
   transition: opacity 400ms ease;
   background: transparent;
 }
 
-.svb-video[data-shown='1'] {
+.dgt-video[data-shown='1'] {
   opacity: 1;
 }
 
 /* 玻璃层的四块：DOM 顺序即叠放顺序（scrim-side → scrim-conv → sheet → seam → glow），
    左/宽在运行时写入，初始 0 宽所以页面不会先闪一块。 */
-#svb-scrim-side,
-#svb-scrim-conv,
-#svb-seam,
-#svb-sheet,
-#svb-glow {
+#dgt-scrim-side,
+#dgt-scrim-conv,
+#dgt-seam,
+#dgt-sheet,
+#dgt-glow {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -95,19 +95,19 @@ html[data-svb='on'] body {
 }
 
 /* 前两栏的压暗蒙版：视频动态范围太大，不压的话正文会飘。 */
-#svb-scrim-side {
-  background-color: rgba(12, 10, 9, var(--svb-side-dim, 0.48));
+#dgt-scrim-side {
+  background-color: rgba(12, 10, 9, var(--dgt-side-dim, 0.48));
 }
 
-#svb-scrim-conv {
-  background-color: rgba(12, 10, 9, var(--svb-conv-dim, 0.54));
+#dgt-scrim-conv {
+  background-color: rgba(12, 10, 9, var(--dgt-conv-dim, 0.54));
 }
 
 /* 右侧工作台：一块不透明玻璃，从 videoRight 一直铺到窗口右缘。
    第三栏、第四栏、第五栏、第六栏共用这一块——栏数变了宽度自动跟着变，
    所以这里没有 border、没有分隔线，也没有任何按栏写死的样式。 */
-#svb-sheet {
-  background-image: var(--svb-sheet-ramp);
+#dgt-sheet {
+  background-image: var(--dgt-sheet-ramp);
   /* 只留顶缘 1px 高光。左缘那条 `inset 1px 0 0` 已去掉：它正好落在视频与右区的
      交界上，在暗画面里就是一条从顶到底的亮线，看起来像把布局切成了两段。 */
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
@@ -120,8 +120,8 @@ html[data-svb='on'] body {
    从视频原亮度渐变到"玻璃在那一高度上的颜色"。
    只做抗锯齿级过渡——原来的 220px 会让画面右缘出现一条比两侧都暗的带子，
    看起来像布局被切成两段。 */
-#svb-seam {
-  background-image: var(--svb-sheet-ramp);
+#dgt-seam {
+  background-image: var(--dgt-sheet-ramp);
   /* 横向 alpha = smoothstep(t), t = x/32：两端斜率为 0。
      下列 stop 即该曲线在 1/8 步长上的取值（误差 < 0.5%）。 */
   -webkit-mask-image: linear-gradient(
@@ -152,7 +152,7 @@ html[data-svb='on'] body {
 
 /* 跨所有右栏的同一盏灯，左缘与收边带对齐，不再探进视频。
    只有这一层：每栏各画一个光斑会在栏边界重新起亮，读成几块独立的板。 */
-#svb-glow {
+#dgt-glow {
   /* 左缘 32px 淡入：光源落在视频里会多出一条暖色竖边，和接缝撞成两条线。 */
   -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 32px);
   mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 32px);
@@ -162,17 +162,17 @@ html[data-svb='on'] body {
        这就是之前那个「圆形往外扩散」的边界感。每档只降一点，落成指数衰减。 */
     radial-gradient(
       30% 23% at 6% 103%,
-      rgba(226, 152, 88, calc(0.26 * var(--svb-glow, 1))),
-      rgba(221, 147, 86, calc(0.185 * var(--svb-glow, 1))) 21%,
-      rgba(214, 145, 84, calc(0.12 * var(--svb-glow, 1))) 43%,
-      rgba(206, 140, 82, calc(0.055 * var(--svb-glow, 1))) 66%,
+      rgba(226, 152, 88, calc(0.26 * var(--dgt-glow, 1))),
+      rgba(221, 147, 86, calc(0.185 * var(--dgt-glow, 1))) 21%,
+      rgba(214, 145, 84, calc(0.12 * var(--dgt-glow, 1))) 43%,
+      rgba(206, 140, 82, calc(0.055 * var(--dgt-glow, 1))) 66%,
       rgba(200, 138, 80, 0) 100%
     ),
     /* 更宽的一层铺垫：把主光斑的尾巴再拖长一倍，让「亮」到「暗」没有落点。 */
     radial-gradient(
       40% 30% at 2% 101%,
-      rgba(226, 152, 88, calc(0.085 * var(--svb-glow, 1))),
-      rgba(210, 142, 84, calc(0.028 * var(--svb-glow, 1))) 58%,
+      rgba(226, 152, 88, calc(0.085 * var(--dgt-glow, 1))),
+      rgba(210, 142, 84, calc(0.028 * var(--dgt-glow, 1))) 58%,
       rgba(205, 140, 82, 0) 100%
     ),
     /* 极淡的横向余晖，只在右区里化开暖光，不再往视频那边铺。 */
@@ -184,13 +184,13 @@ html[data-svb='on'] body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .svb-video {
+  .dgt-video {
     display: none;
   }
 }
 
 /* 调试浮窗：只在 CONFIG.debug 为真时由 JS 创建，默认不存在。 */
-#svb-debug {
+#dgt-debug {
   position: fixed;
   left: 12px;
   bottom: 12px;
@@ -206,7 +206,7 @@ html[data-svb='on'] body {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
 }
 
-#svb-debug pre {
+#dgt-debug pre {
   margin: 0;
   font: inherit;
   color: inherit;

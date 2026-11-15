@@ -48,19 +48,19 @@ function buildConfig() {
 
 const INJECT = `(async () => {
   const base = ${JSON.stringify(BASE)}
-  if (globalThis.__DSH_STATE_VIDEO_BG_API__) globalThis.__DSH_STATE_VIDEO_BG_API__.disable()
+  if (globalThis.__DGT_API__) globalThis.__DGT_API__.disable()
   const [css, cfg, js] = await Promise.all([
     fetch(base + 'runtime/bg.css').then((r) => r.text()),
     fetch(base + 'config.json').then((r) => r.json()),
     fetch(base + 'runtime/bg.js').then((r) => r.text()),
   ])
   const style = document.createElement('style')
-  style.id = 'svb-dev-style'
+  style.id = 'dgt-dev-style'
   style.textContent = css
   document.head.appendChild(style)
-  globalThis.__DSH_STATE_VIDEO_BG__ = cfg
+  globalThis.__DGT__ = cfg
   new Function(js)()
-  console.log('[svb] 已注入，可用 __DSH_STATE_VIDEO_BG_API__.setState(态名) 逐态验收')
+  console.log('[dgt] 已注入，可用 __DGT_API__.setState(态名) 逐态验收')
 })()`
 
 const server = createServer((req, res) => {
