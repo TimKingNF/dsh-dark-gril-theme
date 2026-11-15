@@ -75,19 +75,20 @@
 > 修订 #3 · 2026-11-15 12:40。接缝收窄。开右侧边栏时 `videoRight` 落在两栏之间，原 220px 压暗带在深色画面上就是一条可辨的暗带（用户 12:31 截图指出「一道明显的明暗分界」）。改：`SEAM_WIDTH` 220→32、`GLOW_LEAD` 200→32、`#dgt-sheet` 左缘 `inset 1px 0 0` 高光删除、sheet 左移 2px 压住亚像素缝、新增 `clearEdgeBorder()` 按坐标抹掉右栏面板自带的 `border-left`（不猜 CSS Module 类名）。注意它必须用 `elementsFromPoint` 扫：这条边框挂在**兄弟节点**上，交界点本身是个透明的拖拽把手，从交点往祖先走永远找不到它——第一版就是这么漏掉的，肉眼看仍是一根从顶到底的白线。
 
 **状态词表（5 态）**：`idle` / `thinking` / `acting` / `approval` / `done`。
-`done` 按修订 #11 重新成为确定态（回合结束后 6s 收尾窗口）；`speaking` 按修订 #10 退休（素材并入 thinking）；`error` 不建态，出错与中断直接回落到 `idle`。提问（`user-questions/request`）与审批同属 `approval`。
+`done` 按修订 #11 重新成为确定态，窗口按修订 #12 放宽到 12s；`speaking` 按修订 #10 退休（素材并入 thinking）；`error` 不建态，出错与中断直接回落到 `idle`。提问（`user-questions/request`）与审批同属 `approval`。
 
 **态 → 轮播桶**（22 段全部投用）
 
 | 态 | 桶内容 | 段数 | 单段时长 s |
 | --- | --- | --- | --- |
-| idle | `idle` | 1 | 6.00 |
+| idle（新会话） | `idle` | 1 | 6.00 |
+| idle（跑过回合） | `idle` `done` `done-soft` `done-confirm` | 4 | 6.00 / 6.00 / 6.04 / 6.04 |
 | done | `done` `done-soft` `done-confirm` | 3 | 6.00 / 6.04 / 6.04 |
 | thinking | `thinking` + `speaking` + 11 个 `speaking-*` | 13 | 6.00 / 3.08 / 6.04×11 |
 | acting | `acting` `listening` `listening-focus` `listening-nod` | 4 | 3.08 / 6.00 / 6.04 / 6.04 |
 | approval | `approval` `listening` `listening-focus` `listening-nod` | 4 | 6.00 / 6.00 / 6.04 / 6.04 |
 
-新会话 = 该会话尚无任何 `turn/start`（hero 空白态）。跑过第一个回合后永久使用非新会话池。
+新会话 = 该会话尚无任何 `agent/status:running`（hero 空白态）。跑过第一个回合后永久使用非新会话池——`idle` 与 `done` 共用三段落，差别只是前者多一段纯粹的 `idle.webm`。`done` 态本身只是回合结束后的短窗口（修订 #12 起 12s），长尾归 `idle`。
 
 **轮播规则（所有桶）**
 
@@ -102,7 +103,7 @@
 1. `approval/request` 或 `user-questions/request` 未决 → `approval`，硬切，可打断当前段。
 2. 当前会话的前台工具 `tools/execute` 持续 ≥3s → `acting`（只在边界生效，见下）。
 3. `agent/status:running`、`assistant-stream` 开着、工具刚起头，或**任一子 agent 还在忙** → `thinking`（子 agent 跑起来时主会话可能一声不响，画面不许停在 idle）。
-4. 回合结束后 `DONE_HOLD_MS = 6000` 的收尾窗口内 → `done`；窗口内回合又起来则立即作废。
+4. 回合结束后 `DONE_HOLD_MS = 12000` 的收尾窗口内 → `done`；窗口内回合又起来则立即作废。窗口取 12s 而不是 6s：素材只在片段边界切换，6s 窗口常在上一个片段播完之前就关闭，done 一段都轮不到（实测就是这么漏掉的）。
 5. 其余（含出错、中断）→ `idle`。
 
 **acting 插入规则**
@@ -172,6 +173,11 @@
 > ⑤ 出错与中断不建态：不新增 error，异常路径让机器回落到 idle（回合结束的 done 窗口不算异常）。理由：22 段素材里没有 error 片，加了只能借别的态，语义更乱。
 > ⑥ 验证：`node --test "tests/*.test.mjs"` → 40/40（machine 14 + pools 12 + state-service 4 + host 3 + config 7，实测 40 pass / 0 fail）；`node --check` 三个宿主文件通过。`runtime/bg.js` 一行未改：`pools.done` 直接生效，池子由 `__DGT__.pools` 注入。
 > ⑦ 未验：`lib/*` 是宿主侧，本次改动**需重启 DSH 进程**才生效；`user-questions/request` 的真实接线（本机审批策略已关，只能用 ask_user_question 验）尚待在真回合里点一次确认。
+> 修订 #12 · 2026-11-15 15:58。用户要求 idle 分两种（新会话单段 / 跑过回合四段轮播），并追问 done 为何没观察到。
+> ① `POOLS.idle` 恢复成 `idle` + `done` + `done-soft` + `done-confirm` 四段；`POOLS.idleNew` 仍只有 `idle.webm`。`done` 各三段保持独立。三段落同时出现在 `idle` 与 `done` 两个桶里，和 listening 一样，是「这个态能播什么」的白名单，不是归属。
+> ② done 漏掉的真正原因：`DONE_HOLD_MS` 原来是 6000，而播放在片段边界才换片。回合结束时当前片段最长还剩 6.04s，窗口在换片之前就关了，于是从没进过 done。改成 12000 = 「一段最长 6.04s 播完 + 再起一段 done（最长 6.04s）」的可靠上限。
+> ③ 第二个原因是进程还在跑修订 #10 之前的 4 态代码（`lib/*` 属宿主侧，改完必须重启进程），done 在运行中的版本里根本不存在。重启前怎么等都不会出现。
+> ④ 验证：`node --test "tests/*.test.mjs"` → 40/40（改了两个池断言 + 一处 prune 断言）；`lib/pools.js`、`lib/machine.js` 均已过 `node --check`。
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
 **状态源**：`agent/assistant-stream` + `tools/execute` + `approval/request`（waterfall，必须 `return next()`）+ `agent/status` / `uiSession.sessionStatus`（兜底纠偏）。
@@ -212,7 +218,8 @@
 | `475468c` | 调试浮窗 v2（拖动 / 五栏卡 / 事件流水）+ `hasStarted` 哨兵与起播兜底 |
 | `1b20235` | 修订 #10：4 态重排（speaking → thinking，listening → acting），单测同步 |
 | `3a85451` | 修订 #11：5 态（done 归位、提问并入 approval、子 agent 计入 thinking、listening 共用） |
-| （本条） | 补 `tests/state-service.test.mjs` 四例（提问 → approval、子 agent → thinking），全套 40/40 |
+| `03fc188` | 补 `tests/state-service.test.mjs` 四例（提问 → approval、子 agent → thinking），全套 40/40 |
+| （本条） | 修订 #12：idle 分新会话/跑过回合两种池，done 窗口 6s → 12s |
 
 ## 下一步
 

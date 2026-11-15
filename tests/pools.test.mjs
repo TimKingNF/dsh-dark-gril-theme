@@ -30,15 +30,16 @@ test('listening 三段由 acting 与 approval 共用（归属不互斥）', () =
   assert.equal(POOLS.approval.length, 4)
 })
 
-test('done 是独立桶，idle 只留 idle.webm', () => {
+test('done 是独立桶；跑过回合的 idle 与它共用三段，新会话只用单段', () => {
   assert.deepEqual([...POOLS.done], ['done.webm', 'done-soft.webm', 'done-confirm.webm'])
-  assert.deepEqual([...POOLS.idle], ['idle.webm'])
+  assert.deepEqual([...POOLS.idle], ['idle.webm', 'done.webm', 'done-soft.webm', 'done-confirm.webm'])
   assert.deepEqual([...POOLS.idleNew], ['idle.webm'])
 })
 
-test('idle 桶按「是否新会话」分叉，正常态就是单段 idle', () => {
+test('idle 桶按「是否新会话」分叉：新会话单段，跑过回合后四段轮播', () => {
   assert.deepEqual([...poolFor('idle', { isNewSession: true })], ['idle.webm'])
-  assert.deepEqual([...poolFor('idle', { isNewSession: false })], ['idle.webm'])
+  assert.deepEqual([...poolFor('idle', { isNewSession: false })], [...POOLS.idle])
+  assert.equal(poolFor('idle', { isNewSession: false }).length, 4)
   assert.deepEqual([...poolFor('done', {})], [...POOLS.done])
 })
 
@@ -72,9 +73,9 @@ test('不连续重复在真实随机下也成立（抽 200 次）', () => {
   }
 })
 
-test('单段桶只能重播，返回 0', () => {
+test('单段桶只能重播，返回 0；done 三段不会连抽同 Index', () => {
   assert.equal(pickNext(POOLS.idleNew, 0), 0)
-  assert.equal(pickNext(POOLS.idle, 0), 0)
+  assert.notEqual(pickNext(POOLS.done, 0, () => 0), 0)
 })
 
 test('13 段的 thinking 桶任意上一段都有别的可抽', () => {
@@ -95,6 +96,7 @@ test('上一段索引越界或缺失时当作首次抽取', () => {
 test('pruneToAssets 摘掉缺失段', () => {
   const have = new Set(['idle.webm', 'thinking.webm'])
   assert.deepEqual(pruneToAssets(POOLS.idle, have), ['idle.webm'])
+  assert.deepEqual(pruneToAssets(POOLS.idle, new Set(['done.webm'])), ['done.webm'])
   assert.deepEqual(pruneToAssets(POOLS.thinking, have), ['thinking.webm'])
   assert.deepEqual(pruneToAssets(POOLS.acting, have), [])
   const listeningOnly = new Set(['listening.webm', 'listening-focus.webm', 'listening-nod.webm'])
