@@ -89,6 +89,8 @@
 
 > 修订 #4 · 2026-11-15 13:06。观感双模式。用户 12:56 要求「恢复原来的肤色打光，能在 dark 和 dark-beautify 之间切换对比」。加 `DIM_MODES`（`dark` 侧 0.48 / 对话 0.54；`beautify` 全 0）与 `applyMode()/readMode()/toggleMode()`，只改 `--svb-side-dim` / `--svb-conv-dim` 两个变量，不动 DOM、不重编码素材，切换瞬时且可逆。默认 `dark`，选择写 `localStorage['svb-mode']`，快捷键 `Ctrl+Alt+M`，调试浮窗首行显示当前模式。**已知代价**：`beautify` 下对话列零遮罩，文字直接压在人物上，长回复的可读性要人眼判。
 
+> 修订 #5 · 2026-11-15 13:42。光斑范围与衰减。用户 13:26 指出左下光斑「是一个圆形从左下角向外扩散」，要求范围略扩大、明暗过渡更自然，并给了标线（面板宽的 ~25%、高的 ~19%）。改法两件：①主光斑 `30% 23% at 6% 103%`（原 30% 26% at 8% 104%，圆心更低更左，让可见部分落在标线内）；②三档换五档（0.26 / 0.185 / 0.12 / 0.055 / 0），再叠一层 `40% 30% at 2% 101%`、峰值 0.085 的宽铺垫拖长尾巴——圆形边界感来自两档之间跨度太大，改成近似指数衰减后，底边横扫的最大相邻落差从 12 级降到 6 级/25px。实测（1299px 宽截图）：亮度回到基线 +2 的位置占面板宽 30%、高 15%。
+
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
 **状态源**：`agent/assistant-stream` + `tools/execute` + `approval/request`（waterfall，必须 `return next()`）+ `agent/status` / `uiSession.sessionStatus`（兜底纠偏）。
