@@ -1,6 +1,6 @@
 # 进度总结
 
-> 快照：2026-11-15 15:58（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #11（5 态：done 归位、提问并入 approval、子 agent 计入 thinking）
+> 快照：2026-11-15 16:06（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #13（配置页补快捷键与浮窗操作说明）
 
 ## 一句话状态
 
@@ -37,6 +37,7 @@
 | S3 设置页（两个开关） | 完成，真机已验 | `client.js`：`settings.section` 顶层页「Dark Gril 主题」，打光模式 / 调试浮窗两个 `role=switch` 开关；账户菜单 → 设置 → 左栏「Dark Gril 主题」点进去可见、可点 |
 | S3 快捷键与开关同源 | 完成 | `Ctrl+Alt+M` 与设置页开关都走 POST 落盘；页面内用 `dgt-config` 事件双向同步 |
 | S3 观感不再写 localStorage | 完成 | 删掉 `dgt-mode`，模式只读 `$DSH_HOME/dsh-dark-gril-theme.json` |
+| S3 配置页快捷键说明 | 完成 | `client.js` 的 `Shortcuts` 段：`Ctrl+Alt+M` / `Ctrl+Alt+B` / 拖动与折叠三条，kbd 方块 + 说明文字 |
 
 测试：`node --test "tests/*.test.mjs"` → 40/40（host 3 + machine 14 + pools 12 + state-service 4 + config 7）；`node --check index.js client.js lib/*.js runtime/bg.js` 通过。
 
@@ -178,6 +179,11 @@
 > ② done 漏掉的真正原因：`DONE_HOLD_MS` 原来是 6000，而播放在片段边界才换片。回合结束时当前片段最长还剩 6.04s，窗口在换片之前就关了，于是从没进过 done。改成 12000 = 「一段最长 6.04s 播完 + 再起一段 done（最长 6.04s）」的可靠上限。
 > ③ 第二个原因是进程还在跑修订 #10 之前的 4 态代码（`lib/*` 属宿主侧，改完必须重启进程），done 在运行中的版本里根本不存在。重启前怎么等都不会出现。
 > ④ 验证：`node --test "tests/*.test.mjs"` → 40/40（改了两个池断言 + 一处 prune 断言）；`lib/pools.js`、`lib/machine.js` 均已过 `node --check`。
+> 修订 #13 · 2026-11-15 16:06。配置页补快捷键说明。用户原话（16:02）：「现在更新一下配置页面上的说明，把切换快捷键也补充到配置页面说明上」。
+> ① 两个开关的 hint 各补一句：打光模式写「快捷键 Ctrl + Alt + M 原地切换，和这个开关读写同一份配置」；调试浮窗改成 v2 的真实行为（左下角、可拖动、− / + 折叠、位置只记本次会话）。
+> ② 新增 `Shortcuts` 段挂在本页开关下方，三条：`Ctrl+Alt+M` 切 dark / beautify（等同上面那个开关）；`Ctrl+Alt+B` 临时关整层背景、这一下不写配置；拖动标题条与折叠。键位用等宽小方块（kbd 样式）渲染，说明文字走 `opacity 0.62` 的次要色，段落顶部 `borderTop` 与开关区隔开。
+> ③ 快捷键真相在 `runtime/bg.js:1292-1302`（`ctrlKey && altKey` 且 `key === 'b'` → `toggle()`、`'m'` → `toggleMode()`）；说明只是文案，不新增按键、不改行为。
+> ④ 验证：`node --check client.js` 通过；页面侧 rev 从 `ad292a6e6d5e` 变成 `e46a27b6ecd3`，`GET /plugins/??dsh-dark-gril-theme/client.js&rev=e46a27b6ecd3` 200 / 12477 字节，内容里「快捷键」出现 4 次。改的是纯文本与一个无状态组件，开关逻辑一行未动。
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
 **状态源**：`agent/assistant-stream` + `tools/execute` + `approval/request`（waterfall，必须 `return next()`）+ `agent/status` / `uiSession.sessionStatus`（兜底纠偏）。
@@ -219,7 +225,8 @@
 | `1b20235` | 修订 #10：4 态重排（speaking → thinking，listening → acting），单测同步 |
 | `3a85451` | 修订 #11：5 态（done 归位、提问并入 approval、子 agent 计入 thinking、listening 共用） |
 | `03fc188` | 补 `tests/state-service.test.mjs` 四例（提问 → approval、子 agent → thinking），全套 40/40 |
-| （本条） | 修订 #12：idle 分新会话/跑过回合两种池，done 窗口 6s → 12s |
+| `3e3ac2b` | 修订 #12：idle 分新会话/跑过回合两种池，done 窗口 6s → 12s |
+| （本条） | 修订 #13：配置页补快捷键与调试浮窗操作说明 |
 
 ## 下一步
 

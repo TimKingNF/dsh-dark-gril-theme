@@ -30,12 +30,13 @@ window.__ModuleLoader__.load({
       {
         key: 'beautify',
         label: '打光模式',
-        hint: '开 = beautify：撤掉侧栏与对话区的暗蒙版，恢复素材原本的肤色和光斑。关 = dark：0.48 / 0.54 的可读版压暗。只改 CSS 变量，视频不重新编码。',
+        hint: '开 = beautify：撤掉侧栏与对话区的暗蒙版，恢复素材原本的肤色和光斑。关 = dark：0.48 / 0.54 的可读版压暗。只改 CSS 变量，视频不重新编码。'
+          + '快捷键 Ctrl + Alt + M 原地切换，和这个开关读写同一份配置。',
       },
       {
         key: 'debug',
         label: '调试浮窗',
-        hint: '右下角常驻诊断：当前快照态、正在播的素材与进度、预载目标、状态来源（sse / poll / manual）。',
+        hint: '左下角常驻诊断：在听什么状态、在演哪一段、下一段预载、轮播桶与事件流水。标题条可拖动，右上角 − / + 折叠；位置只记在本次会话，刷新页面后回到默认位置。',
       },
     ]
 
@@ -256,8 +257,59 @@ window.__ModuleLoader__.load({
           ? h('div', null, rows,
               error
                 ? h('div', { style: { marginTop: '10px', fontSize: '12px', color: 'var(--dsw-alias-label-warning, #b7791f)' } }, error)
-                : null)
+                : null,
+              h(Shortcuts))
           : null,
+      )
+    }
+
+
+    /** 快捷键与浮窗操作：只读说明，不带开关，避免和上面的两个键混淆。 */
+    const SHORTCUTS = [
+      { keys: ['Ctrl', 'Alt', 'M'], text: '在 dark / beautify 之间切换，等同于上面的「打光模式」。' },
+      { keys: ['Ctrl', 'Alt', 'B'], text: '临时关掉整层背景（回到原生外观），再按一次恢复；这一下不写配置，刷新即复原。' },
+      { keys: ['拖动标题条'], text: '移动调试浮窗；右侧 − / + 折叠或展开。位置只记在本次会话。' },
+    ]
+
+    function Shortcuts() {
+      const keyStyle = {
+        display: 'inline-block',
+        minWidth: '18px',
+        padding: '1px 5px',
+        border: C.border,
+        borderRadius: '4px',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontSize: '11px',
+        lineHeight: '1.6',
+        textAlign: 'center',
+      }
+      const items = SHORTCUTS.map((item, index) =>
+        h(
+          'div',
+          { key: String(index), style: { display: 'flex', alignItems: 'baseline', gap: '10px', padding: '5px 0' } },
+          h(
+            'div',
+            { style: { flex: 'none', display: 'flex', alignItems: 'center', gap: '4px' } },
+            ...item.keys.map((key, keyIndex) =>
+              h(
+                'span',
+                { key: String(keyIndex), style: Object.assign({}, keyStyle, key.length > 2 ? { minWidth: '0', padding: '1px 6px' } : null) },
+                key,
+              ),
+            ),
+          ),
+          h(
+            'div',
+            { style: { flex: '1 1 auto', fontSize: '12px', lineHeight: '1.55', color: C.tertiary, opacity: C.dim } },
+            item.text,
+          ),
+        ),
+      )
+      return h(
+        'div',
+        { style: { marginTop: '16px', paddingTop: '12px', borderTop: C.borderSoft } },
+        h('div', { style: { marginBottom: '4px', fontSize: '12px', fontWeight: 600, color: C.primary } }, '快捷键'),
+        ...items,
       )
     }
 
