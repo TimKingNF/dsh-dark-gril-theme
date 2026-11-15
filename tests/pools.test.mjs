@@ -3,14 +3,14 @@ import test from 'node:test'
 
 import { ALL_ASSETS, POOLS, pickNext, poolFor, pruneToAssets } from '../lib/pools.js'
 
-test('22 段素材全部进了桶，没有遗漏也没有重复归属错误', () => {
+test('22 段素材全部进了桶，没有遗漏也没有孤儿片', () => {
   assert.equal(ALL_ASSETS.length, 22)
   assert.ok(ALL_ASSETS.includes('listening-nod.webm'))
   assert.ok(ALL_ASSETS.includes('speaking-warm.webm'))
   assert.ok(ALL_ASSETS.includes('acting.webm'))
 })
 
-test('speaking 12 段并进 thinking 桶，listening 三段并进 acting 桶', () => {
+test('thinking 收 12 段 speaking，acting 收 listening 三段', () => {
   assert.equal(POOLS.thinking.length, 13)
   assert.ok(POOLS.thinking.includes('thinking.webm'))
   assert.ok(POOLS.thinking.includes('speaking-explain.webm'))
@@ -18,15 +18,28 @@ test('speaking 12 段并进 thinking 桶，listening 三段并进 acting 桶', (
   for (const name of ['acting.webm', 'listening.webm', 'listening-focus.webm', 'listening-nod.webm']) {
     assert.ok(POOLS.acting.includes(name), `acting 桶缺 ${name}`)
   }
-  assert.deepEqual([...POOLS.approval], ['approval.webm'])
   assert.equal('speaking' in POOLS, false)
 })
 
-test('idle 桶按「是否新会话」分叉', () => {
+test('listening 三段由 acting 与 approval 共用（归属不互斥）', () => {
+  for (const name of ['listening.webm', 'listening-focus.webm', 'listening-nod.webm']) {
+    assert.ok(POOLS.acting.includes(name), `acting 桶缺 ${name}`)
+    assert.ok(POOLS.approval.includes(name), `approval 桶缺 ${name}`)
+  }
+  assert.ok(POOLS.approval.includes('approval.webm'))
+  assert.equal(POOLS.approval.length, 4)
+})
+
+test('done 是独立桶，idle 只留 idle.webm', () => {
+  assert.deepEqual([...POOLS.done], ['done.webm', 'done-soft.webm', 'done-confirm.webm'])
+  assert.deepEqual([...POOLS.idle], ['idle.webm'])
+  assert.deepEqual([...POOLS.idleNew], ['idle.webm'])
+})
+
+test('idle 桶按「是否新会话」分叉，正常态就是单段 idle', () => {
   assert.deepEqual([...poolFor('idle', { isNewSession: true })], ['idle.webm'])
-  const normal = poolFor('idle', { isNewSession: false })
-  assert.equal(normal.length, 4)
-  assert.ok(normal.includes('done-confirm.webm'))
+  assert.deepEqual([...poolFor('idle', { isNewSession: false })], ['idle.webm'])
+  assert.deepEqual([...poolFor('done', {})], [...POOLS.done])
 })
 
 test('未知态回落到 idle 桶，不抛错', () => {
@@ -61,7 +74,7 @@ test('不连续重复在真实随机下也成立（抽 200 次）', () => {
 
 test('单段桶只能重播，返回 0', () => {
   assert.equal(pickNext(POOLS.idleNew, 0), 0)
-  assert.equal(pickNext(POOLS.approval, 0), 0)
+  assert.equal(pickNext(POOLS.idle, 0), 0)
 })
 
 test('13 段的 thinking 桶任意上一段都有别的可抽', () => {
@@ -72,7 +85,7 @@ test('13 段的 thinking 桶任意上一段都有别的可抽', () => {
 })
 
 test('上一段索引越界或缺失时当作首次抽取', () => {
-  const pool = POOLS.idle
+  const pool = POOLS.done
   for (const last of [-1, undefined, null, 99]) {
     const picked = pickNext(pool, last, () => 0)
     assert.ok(picked >= 0 && picked < pool.length)
@@ -84,4 +97,7 @@ test('pruneToAssets 摘掉缺失段', () => {
   assert.deepEqual(pruneToAssets(POOLS.idle, have), ['idle.webm'])
   assert.deepEqual(pruneToAssets(POOLS.thinking, have), ['thinking.webm'])
   assert.deepEqual(pruneToAssets(POOLS.acting, have), [])
+  const listeningOnly = new Set(['listening.webm', 'listening-focus.webm', 'listening-nod.webm'])
+  assert.deepEqual(pruneToAssets(POOLS.approval, listeningOnly), ['listening.webm', 'listening-focus.webm', 'listening-nod.webm'])
+  assert.deepEqual(pruneToAssets(POOLS.done, have), [])
 })
