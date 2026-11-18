@@ -331,7 +331,13 @@ window.__ModuleLoader__.load({
           .catch((err) => {
             // 落盘失败就退回旧值，别让开关显示一个没保存的状态。
             setConfig((prev) => (prev === null ? prev : Object.assign({}, prev, { [key]: previous })))
-            setError('保存失败：' + String(err && err.message ? err.message : err))
+            const raw = String(err && err.message ? err.message : err)
+            // host 侧不认识这个键时给一句能照做的提示：多半是 DSH 进程还跑着旧模块
+            setError(
+              raw === 'no-valid-key'
+                ? '保存失败：当前运行的 DSH 还不认识「' + key + '」这个配置项。host 侧的模块只在进程启动时加载，改完 lib/config.js 必须重启 DSH 才生效（页面刷新不够）。'
+                : '保存失败：' + raw,
+            )
           })
           .finally(() => setSaving(''))
       }

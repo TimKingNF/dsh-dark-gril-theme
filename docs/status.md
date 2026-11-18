@@ -258,7 +258,7 @@
 
 ## 已知限制
 
-1. **安装方式不是 `dsh plugin add`**：沙箱内那条命令恒报 `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK … Read-only file system`，`dsh web --help` 也会写 `~/.dsh/profiles/web/cordis.yml` 被拒。实际做法是 `pnpm link` 装进 `~/.dsh/profiles/web`（dependencies 里 `"dsh-dark-gril-theme": "link:/mnt/d/workspace/dsh-dark-gril-theme"`，`node_modules/` 下是指向工作区的符号链接，`dsh.profile.bundles` 最后一项也是它）。**改宿主侧代码必须重启 DSH 进程**（profile 没有 `dsh-hmr`，存盘不触发重载）；改 `client.js` 只需刷新页面。
+1. **安装方式不是 `dsh plugin add`**：沙箱内那条命令恒报 `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK … Read-only file system`，`dsh web --help` 也会写 `~/.dsh/profiles/web/cordis.yml` 被拒。实际做法是 `pnpm link` 装进 `~/.dsh/profiles/web`（dependencies 里 `"dsh-dark-gril-theme": "link:/mnt/d/workspace/dsh-dark-gril-theme"`，`node_modules/` 下是指向工作区的符号链接，`dsh.profile.bundles` 最后一项也是它）。**改宿主侧代码必须重启 DSH 进程**（存盘不触发重载，`touch` 也不行——`lib/config.js` 是 ESM，进程内模块缓存不会失效）；改 `client.js` 只需刷新页面。**症状识别**：如果只是刷新页面就动新设置项，设置页会报 `保存失败：no-valid-key`——那是 host 侧的 `RULES` 还是旧的、不认识这个键，不是前端写错。
 2. **拖窗口尺寸没亲手验过**：`bsk` 的外层窗口 resize 被播放中的视频挡住（`media source changed`），只验了布局变化下的跟随链路。
 3. **后台窗口解不出视频帧（已查明，非代码问题）**：Agent Window 默认后台打开时 `document.visibilityState` 为 `hidden`，Chrome 推迟媒体加载，`<video>` 恒停 `readyState 0`、事件只有 `loadstart → stalled`；同一 URL 的 `fetch` 仍是 206/59ms，同页 `curl` 5.4MB/52ms。**bsk 验收必须 `bsk_session start … noFocus:false` 开在前台窗口**，否则会把测试环境当成代码故障。插件侧对此的应对是 `ensurePlaying()` 三处重试 + `__DGT_API__.retryPlay()`，回到前台自动再推一次。
 4. **截不到 docked 三/四栏**：本机 dsh-better-sidebar 是浮动模式，网格第三列恒为 0。
