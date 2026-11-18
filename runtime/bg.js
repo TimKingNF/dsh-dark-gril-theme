@@ -76,6 +76,16 @@
   var sseErrors = 0
   /** 每次换片自增，用来丢弃迟到的 canplay 回调。 */
   var boundaryToken = 0
+  var boundaryWatch = 0
+  var advancing = false
+  /**
+   * 边界提前量：还差这么多毫秒就把下一段换上来，绝不等到 `ended`。
+   *
+   * 等到 `ended` 才换有个空档：元素播完后它呈现的那一帧可能已经失效，而新元素的首帧
+   * 还没提交给合成器——中间露出来的是深色舞台底，就是那几帧黑。提前 450ms（淡出 400ms
+   * + 50ms 余量）换，旧元素在整个淡出过程里都还在正常出画，永远不会走到"播完"那一刻。
+   */
+  var BOUNDARY_LEAD_MS = 450
   /** 预加载的那一手：边界时刻如果还是这个态，直接用它，不再重新抽。 */
   var warmPlan = null
   /** 调试浮窗；只有 CONFIG.debug 为真才建。 */
@@ -228,6 +238,44 @@
     }
   }
 
+  /**
+   * 盯当前元素的剩余时长，到提前量就换片。
+   *
+   * 用 requestAnimationFrame 而不是 timeupdate：后者只有 ~4Hz，450ms 的窗口最多踩一次，
+   * 页面卡一下就会落到 `ended` 之后（正是要避免的那个空档）。可见性为 hidden 时 rAF 停摆，
+   * 那一刻的视觉也无所谓，`ended` 仍然兜底。
+   */
+  function watchBoundary() {
+    if (boundaryWatch || !enabled) return
+    boundaryWatch = requestAnimationFrame(function step() {
+      boundaryWatch = 0
+      if (!enabled || !video) return
+      var el = video
+      var total = el.duration
+      if (!advancing && isFinite(total) && total > 0 && !el.paused) {
+        var remainMs = (total - el.currentTime) * 1000
+        if (remainMs <= BOUNDARY_LEAD_MS) {
+          logDebug('边界 · 剩余 ' + Math.round(remainMs) + 'ms')
+          advance()
+          return
+        }
+      }
+      boundaryWatch = requestAnimationFrame(step)
+    })
+  }
+
+  /** 边界动作：抽下一段并换上去。重复触发由 advancing 挡住。 */
+  function advance() {
+    if (advancing) return
+    advancing = true
+    var plan = takeNext()
+    if (!plan) {
+      advancing = false
+      return
+    }
+    playClip(plan)
+  }
+
   /** 边界时取下一段：预载用得上就用预载，态变了就现抽。 */
   function takeNext() {
     var target = planState()
@@ -259,9 +307,11 @@
       // 1.2s 留量：本机 canplay 约 0.2s，慢盘/慢网约 0.6–1.0s。
       if (total - el.currentTime <= 1.2) warmNextClip()
     })
+    // 兜底：正常情况下 450ms 的提前量已经换过片了，走到这里说明 rAF 停过（后台/掉帧）
     el.addEventListener('ended', function () {
-      if (el !== video) return
-      playClip(takeNext())
+      if (el !== video || advancing) return
+      logDebug('边界兜底 · ended')
+      advance()
     })
     el.addEventListener('error', function () {
       warn('素材加载失败：' + String(el.dataset.clip || el.src))
@@ -350,6 +400,8 @@
       state = decision.state
       startAttempts = 0
       hasStarted = true
+      advancing = false
+      watchBoundary()
       logDebug('播 ' + decision.clip + ' · ' + decision.state + ' #' + decision.index + '/' + decision.pool.length)
       schedule()
 
@@ -371,6 +423,9 @@
         logDebug('首帧 ✓ ' + decision.clip + ' · 淡出 ' + fadeMs + 'ms')
         outgoing.setAttribute('data-hide', '')
         setTimeout(function () {
+          // 淡完时旧元素还差多少到结尾：>0 说明全程没走到 ended，那个空档就不存在
+          var tail = outgoing.duration - outgoing.currentTime
+          logDebug('淡出完成 · 旧元素余 ' + (isFinite(tail) ? Math.round(tail * 1000) + 'ms' : '—'))
           // 停旧元素与 token 无关：过期只代表这次淡出被下一次换片接管了，元素还是要停
           try {
             outgoing.pause()
@@ -1297,6 +1352,11 @@
 
   function disable() {
     enabled = false
+    if (boundaryWatch) {
+      cancelAnimationFrame(boundaryWatch)
+      boundaryWatch = 0
+    }
+    advancing = false
     document.documentElement.removeAttribute(HTML_ATTR)
     restoreDark()
     restoreColumnBackgrounds()

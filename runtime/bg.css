@@ -82,6 +82,14 @@ html[data-dgt='on'] body {
   /* 400ms 与状态机的交叉淡入同一档，改一处就要改两处 */
   transition: opacity 400ms ease;
   background: transparent;
+  /*
+   * 显式提升成合成层并常驻：video 层在 opacity 过渡里被反复提升/降级时，
+   * Chrome 会重绘整层，表现就是过渡途中的一两次闪。will-change 让它一开始就在独立层上，
+   * 只改变 alpha，不触发 re-raster。
+   */
+  will-change: opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .dgt-video[data-top] {
