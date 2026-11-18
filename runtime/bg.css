@@ -104,6 +104,19 @@ html[data-dgt='on'] body {
   transition: none;
 }
 
+/* 换片用的遮盖层（dip 过渡）。几何跟随 #dgt-stage（inset:0），
+   所以它盖住的正好是视频那一块，右区玻璃一点不受影响。
+   颜色取玻璃色阶最暗的一档，不是纯黑：纯黑挨着浅色面板太跳。 */
+#dgt-dip {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  background-color: rgb(13, 10, 12);
+  will-change: opacity;
+}
+
 /* 玻璃层的四块：DOM 顺序即叠放顺序（scrim-side → scrim-conv → sheet → seam → glow），
    左/宽在运行时写入，初始 0 宽所以页面不会先闪一块。 */
 #dgt-scrim-side,

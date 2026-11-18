@@ -86,6 +86,23 @@
    * + 50ms 余量）换，旧元素在整个淡出过程里都还在正常出画，永远不会走到"播完"那一刻。
    */
   var BOUNDARY_LEAD_MS = 450
+  /**
+   * 换片过渡。两种：
+   *
+   * - `dip`（默认）盖住再揭：先压一段暗，盖满的那一刻换元素，再揭开。
+   *   直接交叉淡入的问题是素材本身——每段里人物的位置和姿态不一样，两层同时半透明时
+   *   会读出两个影子，看着就是「跳了一下」。盖住的这 150ms 里换的是元素，眼睛只看到
+   *   一次均匀的明暗起伏，读成呼吸。
+   * - `cross` 两段直接叠着淡，留着做对照。
+   *
+   * 暗色取玻璃色阶最暗的一档 rgb(13,10,12)，不是纯黑：纯黑贴在浅色面板边上太跳。
+   */
+  var DIP_IN_MS = 150
+  var DIP_OUT_MS = 220
+  var TRANSITION_KEY = 'dgt-transition'
+  var transition = 'dip'
+  /** 过暗一闪的遮盖层，几何跟随 stage（inset:0），不需要单独摆位。 */
+  var dipEl = null
   /** 预加载的那一手：边界时刻如果还是这个态，直接用它，不再重新抽。 */
   var warmPlan = null
   /** 调试浮窗；只有 CONFIG.debug 为真才建。 */
@@ -353,6 +370,47 @@
    * 叠放口径见 bg.css：新元素先以「不透明但在下」的形态垫好，旧元素仍带 data-top 盖在上面，
    * 所以新元素的空帧永远露不出来；等首帧呈现后才给旧元素打 data-hide 淡出。
    */
+  /** 换片时唯一记账的地方：两条过渡路径都走它，省得两边状态漂移。 */
+  function adoptClip(decision, nextIndex, incoming) {
+    videoIndex = nextIndex
+    video = incoming
+    currentClip = decision.clip
+    currentPool = decision.pool
+    currentIndex = decision.index
+    currentChosenState = decision.state
+    if (decision.state !== 'acting') underlyingState = decision.state
+    state = decision.state
+    startAttempts = 0
+    hasStarted = true
+    advancing = false
+    watchBoundary()
+    logDebug('播 ' + decision.clip + ' · ' + decision.state + ' #' + decision.index + '/' + decision.pool.length)
+    schedule()
+  }
+
+  /** 瞬时摆上屏：不给过渡，"归位"本身就不会变成一次闪。 */
+  function snapIn(el) {
+    el.setAttribute('data-instant', '')
+    el.removeAttribute('data-hide')
+    el.setAttribute('data-top', '')
+    void el.offsetWidth
+    el.removeAttribute('data-instant')
+  }
+
+  /** 瞬时关掉旧元素，并且一定把它停住（别再往后播）。 */
+  function snapOut(el) {
+    el.setAttribute('data-instant', '')
+    el.setAttribute('data-hide', '')
+    el.removeAttribute('data-top')
+    void el.offsetWidth
+    el.removeAttribute('data-instant')
+    try {
+      el.pause()
+    } catch (error) {
+      /* 暂停失败不影响换片 */
+    }
+  }
+
   function playClip(decision, opts) {
     if (!decision || videos.length === 0) return
     var fadeMs = opts && isFinite(opts.fadeMs) ? opts.fadeMs : 400
@@ -361,9 +419,57 @@
     var incoming = videos[nextIndex]
     var outgoing = videos[videoIndex]
     var firstRun = !hasStarted || !outgoing || outgoing === incoming
+    // 首次起播没有旧元素可盖，硬切本来就是对的，不走 over-dark
+    var useDip = !firstRun && transition === 'dip' && !!dipEl
 
     function commit() {
       if (token !== boundaryToken) return
+
+      if (useDip) {
+        // 盖 → 换 → 揭。覆盖期间画面上什么都没有，新元素的空帧与旧元素的残帧都看不见。
+        var inMs = Math.round((opts && opts.dipInMs) || DIP_IN_MS)
+        var outMs = Math.round((opts && opts.dipOutMs) || DIP_OUT_MS)
+        if (inMs <= 0) {
+          try {
+            incoming.currentTime = 0
+          } catch (error) {
+            /* 元数据没就绪时忽略 */
+          }
+          snapIn(incoming)
+          var hardPlay = incoming.play()
+          if (hardPlay && typeof hardPlay.catch === 'function') {
+            hardPlay.catch(function (error) {
+              warn('素材未能自动播放：' + String(error))
+            })
+          }
+          snapOut(outgoing)
+          adoptClip(decision, nextIndex, incoming)
+          return
+        }
+        dipEl.style.transition = 'opacity ' + inMs + 'ms linear'
+        dipEl.style.opacity = '1'
+        logDebug('过暗 · 盖 ' + inMs + 'ms → 换片 → 揭 ' + outMs + 'ms')
+        setTimeout(function () {
+          if (token !== boundaryToken) return
+          try {
+            incoming.currentTime = 0
+          } catch (error) {
+            /* 元数据没就绪时忽略 */
+          }
+          snapIn(incoming)
+          var played = incoming.play()
+          if (played && typeof played.catch === 'function') {
+            played.catch(function (error) {
+              warn('素材未能自动播放：' + String(error))
+            })
+          }
+          snapOut(outgoing)
+          adoptClip(decision, nextIndex, incoming)
+          dipEl.style.transition = 'opacity ' + outMs + 'ms linear'
+          dipEl.style.opacity = '0'
+        }, inMs)
+        return
+      }
 
       // 预备：这一步只是把新元素摆成正确的叠放与可见性，不该有任何动画
       incoming.setAttribute('data-instant', '')
@@ -390,20 +496,7 @@
       }
 
       // 记账放在同步段：调试浮窗与状态机不该等首帧
-      videoIndex = nextIndex
-      video = incoming
-      currentClip = decision.clip
-      currentPool = decision.pool
-      currentIndex = decision.index
-      currentChosenState = decision.state
-      if (decision.state !== 'acting') underlyingState = decision.state
-      state = decision.state
-      startAttempts = 0
-      hasStarted = true
-      advancing = false
-      watchBoundary()
-      logDebug('播 ' + decision.clip + ' · ' + decision.state + ' #' + decision.index + '/' + decision.pool.length)
-      schedule()
+      adoptClip(decision, nextIndex, incoming)
 
       if (firstRun) {
         // 首次起播没有旧元素可淡出：等首帧到了再点亮，开局也不留一块黑
@@ -840,7 +933,13 @@
     var sub = document.getElementById('dgt-debug-sub')
     if (sub) {
       // 空字段直接跳过：没起播时 currentChosenState 是空串，别留下两个连着的圆点。
-      var parts = [mode, currentChosenState, sourceKind, hasStarted ? '' : '未起播']
+      var parts = [
+        mode,
+        transition === 'cross' ? '直接叠淡' : '过暗一闪',
+        currentChosenState,
+        sourceKind,
+        hasStarted ? '' : '未起播',
+      ]
       sub.textContent = parts.filter(function (part) {
         return part !== ''
       }).join(' · ')
@@ -893,6 +992,11 @@
     }
     video = videos[0]
 
+    // 遮盖层压在两个 video 之上，但仍在 stage 里：只盖视频那一块，不碰右区玻璃。
+    dipEl = document.createElement('div')
+    dipEl.id = 'dgt-dip'
+    stage.appendChild(dipEl)
+
     var glass = document.createElement('div')
     glass.id = 'dgt-glass'
 
@@ -930,6 +1034,7 @@
     if (typeof CONFIG.glow === 'number') DIM_MODES.dark.glow = CONFIG.glow
     BASE_RAMP = getComputedStyle(document.documentElement).getPropertyValue('--dgt-sheet-ramp').trim()
     applyMode(readMode(), false)
+    applyTransition(readTransition(), false)
   }
 
   /**
@@ -1078,6 +1183,35 @@
   }
 
   /**
+   * 换片过渡方式。
+   *
+   * `dip` 先压一段暗盖住画面、盖满的那一刻换元素、再揭开；`cross` 是两段直接叠着淡。
+   * 前者掩盖的是素材本身的差异（人物位置/姿态不一样，叠着淡会看出两个影子），
+   * 后者留着做对照。都只动元素可见性，不重新编码素材。
+   */
+  function applyTransition(next, persist) {
+    var name = next === 'cross' ? 'cross' : 'dip'
+    transition = name
+    if (dipEl && name === 'cross') {
+      // 切到 cross 时把遮盖层归零，否则上一次过暗留下的半透明会一直挂着
+      dipEl.style.transition = 'none'
+      dipEl.style.opacity = '0'
+    }
+    if (persist) persistConfig({ transition: name })
+    renderDebug()
+    notifyConfig()
+    return transition
+  }
+
+  function readTransition() {
+    return CONFIG.transition === 'cross' ? 'cross' : 'dip'
+  }
+
+  function toggleTransition() {
+    return applyTransition(transition === 'dip' ? 'cross' : 'dip', true)
+  }
+
+  /**
    * 把一次改动写回配置文件（唯一真相源）。
    * 失败只 warn：页面侧的观感已经改了，不该因为落盘失败又弹回去。
    */
@@ -1106,8 +1240,11 @@
     try {
       CONFIG.debug = debugEl !== null
       CONFIG.beautify = mode === 'beautify'
+      CONFIG.transition = transition
       document.dispatchEvent(
-        new CustomEvent('dgt-config', { detail: { beautify: CONFIG.beautify, debug: CONFIG.debug } }),
+        new CustomEvent('dgt-config', {
+          detail: { beautify: CONFIG.beautify, debug: CONFIG.debug, transition: transition },
+        }),
       )
     } catch (e) {}
   }
@@ -1357,6 +1494,10 @@
       boundaryWatch = 0
     }
     advancing = false
+    if (dipEl) {
+      dipEl.style.transition = 'none'
+      dipEl.style.opacity = '0'
+    }
     document.documentElement.removeAttribute(HTML_ATTR)
     restoreDark()
     restoreColumnBackgrounds()
@@ -1438,6 +1579,9 @@
     } else if (key === 'm') {
       event.preventDefault()
       toggleMode()
+    } else if (key === 't') {
+      event.preventDefault()
+      toggleTransition()
     }
   })
 
@@ -1457,6 +1601,8 @@
     setMode: applyMode,
     toggleMode: toggleMode,
     setDebug: setDebug,
+    setTransition: applyTransition,
+    toggleTransition: toggleTransition,
     retryPlay: function () {
       startAttempts = 0
       ensurePlaying('手动重试')
@@ -1466,6 +1612,9 @@
     },
     get mode() {
       return mode
+    },
+    get transition() {
+      return transition
     },
     get state() {
       return state
