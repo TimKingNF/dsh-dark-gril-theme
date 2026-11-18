@@ -20,6 +20,22 @@ test('默认值里两个开关都是关', () => {
   assert.equal(DEFAULTS.enabled, true)
 })
 
+test('dip 时长与过渡方式都有默认值', () => {
+  assert.equal(DEFAULTS.transition, 'dip')
+  assert.equal(DEFAULTS.dipInMs, 250)
+  assert.equal(DEFAULTS.dipOutMs, 400)
+})
+
+test('dip 时长超界或非数字被拒，过渡方式只认两个值', () => {
+  assert.deepEqual(sanitizePatch({ dipInMs: 400, dipOutMs: 900, transition: 'cross' }), {
+    dipInMs: 400,
+    dipOutMs: 900,
+    transition: 'cross',
+  })
+  assert.deepEqual(sanitizePatch({ dipInMs: 5000, dipOutMs: -1, transition: 'zzz' }), {})
+  assert.deepEqual(sanitizePatch({ dipInMs: '400' }), {})
+})
+
 test('只收白名单里的合法键', () => {
   const clean = sanitizePatch({
     beautify: true,

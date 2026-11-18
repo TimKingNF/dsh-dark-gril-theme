@@ -1,6 +1,6 @@
 # 进度总结
 
-> 快照：2026-11-19 01:12（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`；已发 tag `v0.1.0`。规格修订 #19（换片过渡改「过暗一闪」，`cross` 留作对照）
+> 快照：2026-11-19 01:22（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`；已发 tag `v0.1.0`。规格修订 #20（dip 两段时长做成配置项，默认 250/400）
 
 ## 一句话状态
 
@@ -232,6 +232,15 @@
 > ④ `cross`（两段直接叠着淡）原样保留做对照，`Ctrl+Alt+T` 切换，落到配置键 `transition: 'dip' | 'cross'`（`lib/config.js` 新增 enum 校验），调试浮窗副标题会显示当前用的是哪种。
 > ⑤ 实测（1279×1207 前台窗口，rAF 1215 帧跨一次真实边界）：遮盖峰值 **0.879**（采样到的是过渡进行中的值，不是目标值），单次遮盖 313ms，换片发生在遮盖 0.85 时，**可见元素空帧 = 0**。峰值刻意不到 1：留 12% 的可见度让两种态之间是"化开"而不是"闪黑"。
 > ⑥ `Ctrl+Alt+M`（dark/beautify）与本次的 `Ctrl+Alt+T` 互不干扰；`applyTransition('cross')` 会把遮盖层立刻归零，不会留下半透明的残留。
+
+> 修订 #20 · 2026-11-19 01:20。用户要求「盖的那段拉长、揭得更慢，这个做成设置项动态参数可调整」。**dip 的两段时长从常量变成配置项，默认值同步拉长。**
+> ① 默认值 150/220 → **250/400**（合 650ms，比原实现长一倍多）。用户要的"拉长 + 更慢"直接落在默认值上，滑块只是让他还能再调；不想再调的人不用进设置页。
+> ② 配置键 `dipInMs` / `dipOutMs`，`{ kind:'number', min:0, max:1200 }`，非法值（超界、字符串、NaN）一律整条拒收，不会写半个值进配置。`CONFIG_KEYS` 12 个。
+> ③ 边界提前量跟着走：`boundaryLeadMs()` 在 `transition === 'dip'` 时取 `max(450, in + out + 60)`，`watchBoundary()` 用它判定"还剩多久该换"。也就是说把时长调到 700/1100 时，提前量自动从 450ms 变成 1800ms，不会出现"盖子还没盖上就换完了"。`cross` 仍然固定 450ms。
+> ④ 设置页新增三个控件（`client.js` 的 `FIELDS` / `Row` 分派）：换片过渡两颗胶囊按钮（`dip` / `cross`，此前只有快捷键没有界面）、压暗与揭开两条滑块（拖动只改本地显示，松手/键盘抬起才写盘并推给运行时）。运行时侧 `api.setDip(inMs, outMs, persist)` 直接生效，不必刷新。
+> ⑤ 调试浮窗的 `boundary` 行改成「盖 X / 揭 Yms · 提前 Zms」，改完立刻能看到上一层的实际取值。
+> ⑥ 验证边界：`node --check` 三个文件通过；`node --test` **51 pass / 0 fail**（新增两例：默认值、超界与非数字被拒 + enum 只认两值）；`sanitizePatch({dipInMs:400,dipOutMs:900,transition:'cross'})` 全收、`{dipInMs:5000,dipOutMs:-1,transition:'zzz'}` 全拒；活页面上 `api.setDip(400,700,false)` 返回 `{inMs:400,outMs:700}`。
+> ⑦ **未在屏幕上量过自定义时长的真实曲线**：agent 窗口被系统判定遮挡后 `visibilityState` 变 `hidden`，rAF 与 CSS 过渡都不推进（`<video>` 也停在 `readyState 2`），只能验到"值进去了"。默认值那条曲线此前量过（峰值 0.879 / 313ms / 空帧 0），自定义值走的是同一段代码，差别只有两个数字——但仍需一次可见窗口实测。
 
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 

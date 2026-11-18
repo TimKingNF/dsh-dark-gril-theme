@@ -97,8 +97,27 @@
    *
    * 暗色取玻璃色阶最暗的一档 rgb(13,10,12)，不是纯黑：纯黑贴在浅色面板边上太跳。
    */
-  var DIP_IN_MS = 150
-  var DIP_OUT_MS = 220
+  var DIP_IN_MS = 250
+  var DIP_OUT_MS = 400
+  /** 配置里写死过的时长（走 CONFIG，缺省用上面的常量）。 */
+  function dipTiming() {
+    var inMs = typeof CONFIG.dipInMs === 'number' && isFinite(CONFIG.dipInMs) ? CONFIG.dipInMs : DIP_IN_MS
+    var outMs = typeof CONFIG.dipOutMs === 'number' && isFinite(CONFIG.dipOutMs) ? CONFIG.dipOutMs : DIP_OUT_MS
+    return {
+      inMs: Math.max(0, Math.min(1200, Math.round(inMs))),
+      outMs: Math.max(0, Math.min(1200, Math.round(outMs))),
+    }
+  }
+
+  /**
+   * 边界提前量必须跟着过渡走：遮盖时长一拉长，还按 450ms 提前就会"盖到一半就换完"，
+   * 甚至换完那一刻旧元素已经播完（就是最初的黑帧）。所以取「过渡总长 + 60ms 余量」
+   * 与 450ms 的较大值。
+   */
+  function boundaryLeadMs() {
+    var t = dipTiming()
+    return transition === 'dip' ? Math.max(BOUNDARY_LEAD_MS, t.inMs + t.outMs + 60) : BOUNDARY_LEAD_MS
+  }
   var TRANSITION_KEY = 'dgt-transition'
   var transition = 'dip'
   /** 过暗一闪的遮盖层，几何跟随 stage（inset:0），不需要单独摆位。 */
@@ -271,7 +290,7 @@
       var total = el.duration
       if (!advancing && isFinite(total) && total > 0 && !el.paused) {
         var remainMs = (total - el.currentTime) * 1000
-        if (remainMs <= BOUNDARY_LEAD_MS) {
+        if (remainMs <= boundaryLeadMs()) {
           logDebug('边界 · 剩余 ' + Math.round(remainMs) + 'ms')
           advance()
           return
@@ -427,8 +446,9 @@
 
       if (useDip) {
         // 盖 → 换 → 揭。覆盖期间画面上什么都没有，新元素的空帧与旧元素的残帧都看不见。
-        var inMs = Math.round((opts && opts.dipInMs) || DIP_IN_MS)
-        var outMs = Math.round((opts && opts.dipOutMs) || DIP_OUT_MS)
+        var timing = dipTiming()
+        var inMs = Math.round((opts && opts.dipInMs) || timing.inMs)
+        var outMs = Math.round((opts && opts.dipOutMs) || timing.outMs)
         if (inMs <= 0) {
           try {
             incoming.currentTime = 0
@@ -928,7 +948,13 @@
         ? 'rs' + warmEl.readyState + (warmEl.readyState >= 2 ? ' 可播' : ' 未就绪')
         : '—',
     )
-    debugSet('boundary', warm ? '态不变→用预载，态变了→现抽' : '剩 1.2s 时才开始预载')
+    var t = dipTiming()
+    debugSet(
+      'boundary',
+      transition === 'dip'
+        ? '盖 ' + t.inMs + ' / 揭 ' + t.outMs + 'ms · 提前 ' + boundaryLeadMs() + 'ms'
+        : '直接叠淡 · 提前 ' + boundaryLeadMs() + 'ms',
+    )
 
     var sub = document.getElementById('dgt-debug-sub')
     if (sub) {
@@ -1209,6 +1235,27 @@
 
   function toggleTransition() {
     return applyTransition(transition === 'dip' ? 'cross' : 'dip', true)
+  }
+
+  /**
+   * 改 dip 的两段时长（盖 / 揭），毫秒。设置页拖滑块、快捷键、API 都走这里。
+   *
+   * 只改过渡节奏，不碰素材：素材一个像素都没被重新编码。
+   * 边界提前量会立刻跟着重算（`boundaryLeadMs()`），否则下一次换片就会盖到一半。
+   */
+  function setDip(inMs, outMs, persist) {
+    var patch = {}
+    if (typeof inMs === 'number' && isFinite(inMs)) {
+      CONFIG.dipInMs = Math.max(0, Math.min(1200, Math.round(inMs)))
+      patch.dipInMs = CONFIG.dipInMs
+    }
+    if (typeof outMs === 'number' && isFinite(outMs)) {
+      CONFIG.dipOutMs = Math.max(0, Math.min(1200, Math.round(outMs)))
+      patch.dipOutMs = CONFIG.dipOutMs
+    }
+    if (persist && Object.keys(patch).length > 0) persistConfig(patch)
+    renderDebug()
+    return dipTiming()
   }
 
   /**
@@ -1603,6 +1650,7 @@
     setDebug: setDebug,
     setTransition: applyTransition,
     toggleTransition: toggleTransition,
+    setDip: setDip,
     retryPlay: function () {
       startAttempts = 0
       ensurePlaying('手动重试')

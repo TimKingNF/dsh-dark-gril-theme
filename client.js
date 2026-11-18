@@ -34,6 +34,37 @@ window.__ModuleLoader__.load({
           + '快捷键 Ctrl + Alt + M 原地切换，和这个开关读写同一份配置。',
       },
       {
+        key: 'transition',
+        label: '换片过渡',
+        kind: 'enum',
+        options: [
+          { value: 'dip', label: '过暗一闪' },
+          { value: 'cross', label: '直接叠淡' },
+        ],
+        hint: '过暗一闪 = 先压暗盖住、在盖住的那一刻换元素、再揭开（默认，两段素材里人物位置不同也不容易被看见）。'
+          + '直接叠淡 = 旧做法，两段同时半透明交叉。快捷键 Ctrl + Alt + T 原地切。',
+      },
+      {
+        key: 'dipInMs',
+        label: '换片：压暗时长',
+        kind: 'number',
+        min: 0,
+        max: 800,
+        step: 10,
+        unit: 'ms',
+        hint: '换片时先压暗多久再换元素。拉长 = 更像"闭眼再睁眼"，收得越久，两段素材里人物位置的差异越不容易被看见。0 = 不要这一下（直接切）。',
+      },
+      {
+        key: 'dipOutMs',
+        label: '换片：揭开时长',
+        kind: 'number',
+        min: 0,
+        max: 1200,
+        step: 10,
+        unit: 'ms',
+        hint: '压暗之后再揭开的时间。比压暗长会更"呼吸"，太短会读成闪一下。两者之和决定每次换片占用多久（当前边界提前量会跟着自动放大）。',
+      },
+      {
         key: 'debug',
         label: '调试浮窗',
         hint: '左下角常驻诊断：在听什么状态、在演哪一段、下一段预载、轮播桶与事件流水。标题条可拖动，右上角 − / + 折叠；位置只记在本次会话，刷新页面后回到默认位置。',
@@ -55,7 +86,7 @@ window.__ModuleLoader__.load({
     }
 
     /** 把一次改动推给页面里已注入的运行时；没有运行时（未注入）就只留配置。 */
-    function applyLive(key, value) {
+    function applyLive(key, value, config) {
       const api = globalThis.__DGT_API__
       if (api === undefined || api === null) return
       try {
@@ -64,6 +95,13 @@ window.__ModuleLoader__.load({
         }
         if (key === 'debug' && typeof api.setDebug === 'function') {
           api.setDebug(value === true, false)
+        }
+        if ((key === 'dipInMs' || key === 'dipOutMs') && typeof api.setDip === 'function' && config) {
+          // 两个值是配对的，改一个也要把另一个的当前值一起交回去
+          api.setDip(Number(config.dipInMs), Number(config.dipOutMs), false)
+        }
+        if (key === 'transition' && typeof api.setTransition === 'function') {
+          api.setTransition(value, false)
         }
       } catch {
         /* 运行时自己坏了不该顶掉设置页 */
@@ -137,12 +175,96 @@ window.__ModuleLoader__.load({
             field.hint,
           ),
         ),
-        h(Switch, {
-          on: props.value === true,
+        field.kind === 'enum'
+          ? h(EnumField, { field: field, value: props.value, disabled: props.disabled, onChange: props.onChange })
+          : field.kind === 'number'
+          ? h(NumberField, {
+              field: field,
+              value: typeof props.value === 'number' ? props.value : Number(field.min || 0),
+              disabled: props.disabled,
+              onChange: props.onChange,
+            })
+          : h(Switch, {
+              on: props.value === true,
+              disabled: props.disabled,
+              label: field.label,
+              onToggle: () => props.onChange(!(props.value === true)),
+            }),
+      )
+    }
+
+    /** 枚举项：两个胶囊按钮，点谁就是谁。 */
+    function EnumField(props) {
+      const field = props.field
+      return h(
+        'div',
+        { style: { flex: 'none', display: 'flex', gap: '6px' } },
+        ...(field.options || []).map((opt) =>
+          h(
+            'button',
+            {
+              key: opt.value,
+              type: 'button',
+              disabled: props.disabled,
+              onClick: () => {
+                if (props.value !== opt.value) props.onChange(opt.value)
+              },
+              style: {
+                appearance: 'none',
+                border: props.value === opt.value ? '1px solid ' + C.trackOn : C.border,
+                background: props.value === opt.value ? C.trackOn : 'transparent',
+                color: props.value === opt.value ? '#0b0b0d' : C.secondary,
+                borderRadius: '999px',
+                padding: '4px 12px',
+                fontSize: '12px',
+                fontFamily: 'inherit',
+                cursor: props.disabled ? 'default' : 'pointer',
+                opacity: props.disabled ? 0.6 : 1,
+              },
+            },
+            opt.label,
+          ),
+        ),
+      )
+    }
+
+    /** 数值项：滑块 + 当前值，松手才写盘，拖动过程只改本地显示。 */
+    function NumberField(props) {
+      const field = props.field
+      const [draft, setDraft] = React.useState(props.value)
+      React.useEffect(() => setDraft(props.value), [props.value])
+      return h(
+        'div',
+        { style: { flex: 'none', display: 'flex', alignItems: 'center', gap: '10px', minWidth: '190px' } },
+        h('input', {
+          type: 'range',
+          min: field.min,
+          max: field.max,
+          step: field.step || 1,
+          value: draft,
           disabled: props.disabled,
-          label: field.label,
-          onToggle: () => props.onChange(!(props.value === true)),
+          'aria-label': field.label,
+          onChange: (event) => setDraft(Number(event.target.value)),
+          onMouseUp: () => props.onChange(draft),
+          onTouchEnd: () => props.onChange(draft),
+          onKeyUp: () => props.onChange(draft),
+          style: { flex: '1 1 auto', accentColor: C.trackOn, cursor: 'pointer' },
         }),
+        h(
+          'span',
+          {
+            style: {
+              flex: 'none',
+              width: '56px',
+              textAlign: 'right',
+              fontSize: '12px',
+              fontVariantNumeric: 'tabular-nums',
+              color: C.secondary,
+              opacity: props.disabled ? 0.6 : 1,
+            },
+          },
+          String(draft) + (field.unit || ''),
+        ),
       )
     }
 
@@ -204,7 +326,7 @@ window.__ModuleLoader__.load({
               throw new Error(body && body.error ? String(body.error) : 'HTTP ' + res.status)
             }
             if (body && body.config) setConfig(body.config)
-            applyLive(key, value)
+            applyLive(key, value, body && body.config ? body.config : null)
           })
           .catch((err) => {
             // 落盘失败就退回旧值，别让开关显示一个没保存的状态。
