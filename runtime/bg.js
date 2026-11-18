@@ -269,50 +269,119 @@
     return el
   }
 
-  /** 播一段：换到另一个 video 元素，canplay 之后才替换，接缝才不黑。 */
-  function playClip(decision) {
+  /**
+   * 首帧门闩：回调触发时说明这一帧已经交给合成器，可以安全地把旧元素淡出去了。
+   *
+   * canplay / loadeddata / playing 只保证「数据够了」，不保证「屏幕上已经有画面」——
+   * 换片时那几帧黑就是在这儿漏出来的。requestVideoFrameCallback 是唯一对准的时机：
+   * 它在帧被提交给合成器时回调。
+   *
+   * rVFC 迟迟不来（后台标签页、解码卡住、play() 被拒）时 400ms 兜底放行，
+   * 最坏退化成「不等首帧」的旧行为，不会把播放卡死。
+   */
+  function firstFrame(el, cb) {
+    var fired = false
+    function once() {
+      if (fired) return
+      fired = true
+      cb()
+    }
+    if (typeof el.requestVideoFrameCallback === 'function') {
+      el.requestVideoFrameCallback(function () {
+        requestAnimationFrame(once)
+      })
+      setTimeout(once, 400)
+      return
+    }
+    // 老 Chrome 没有 rVFC：canplay 之后再等一小段，让首帧有机会提交
+    setTimeout(once, 60)
+  }
+
+  /**
+   * 播一段：换到另一个 video 元素，等新元素真的出画了才把旧元素淡出去。
+   *
+   * 叠放口径见 bg.css：新元素先以「不透明但在下」的形态垫好，旧元素仍带 data-top 盖在上面，
+   * 所以新元素的空帧永远露不出来；等首帧呈现后才给旧元素打 data-hide 淡出。
+   */
+  function playClip(decision, opts) {
     if (!decision || videos.length === 0) return
+    var fadeMs = opts && isFinite(opts.fadeMs) ? opts.fadeMs : 400
     var token = (boundaryToken += 1)
     var nextIndex = (videoIndex + 1) % videos.length
     var incoming = videos[nextIndex]
     var outgoing = videos[videoIndex]
+    var firstRun = !hasStarted || !outgoing || outgoing === incoming
 
     function commit() {
       if (token !== boundaryToken) return
+
+      // 预备：这一步只是把新元素摆成正确的叠放与可见性，不该有任何动画
+      incoming.setAttribute('data-instant', '')
+      if (firstRun) {
+        incoming.setAttribute('data-hide', '')
+        incoming.setAttribute('data-top', '')
+      } else {
+        incoming.removeAttribute('data-hide')
+        incoming.removeAttribute('data-top')
+      }
       try {
         incoming.currentTime = 0
       } catch (error) {
         /* 元数据没就绪时忽略，反正它就是 0 */
       }
+      void incoming.offsetWidth
+      incoming.removeAttribute('data-instant')
+
       var played = incoming.play()
       if (played && typeof played.catch === 'function') {
         played.catch(function (error) {
           warn('素材未能自动播放：' + String(error))
         })
       }
-      incoming.setAttribute('data-shown', '1')
-      if (outgoing && outgoing !== incoming) outgoing.removeAttribute('data-shown')
+
+      // 记账放在同步段：调试浮窗与状态机不该等首帧
       videoIndex = nextIndex
       video = incoming
       currentClip = decision.clip
-      hasStarted = true
       currentPool = decision.pool
       currentIndex = decision.index
       currentChosenState = decision.state
       if (decision.state !== 'acting') underlyingState = decision.state
       state = decision.state
       startAttempts = 0
+      hasStarted = true
       logDebug('播 ' + decision.clip + ' · ' + decision.state + ' #' + decision.index + '/' + decision.pool.length)
       schedule()
-      // 淡出跑完（400ms）再把旧元素停掉：停早了会截掉最后几帧。
-      setTimeout(function () {
+
+      if (firstRun) {
+        // 首次起播没有旧元素可淡出：等首帧到了再点亮，开局也不留一块黑
+        firstFrame(incoming, function () {
+          if (token !== boundaryToken) return
+          incoming.setAttribute('data-instant', '')
+          incoming.removeAttribute('data-hide')
+          incoming.setAttribute('data-top', '')
+          void incoming.offsetWidth
+          incoming.removeAttribute('data-instant')
+        })
+        return
+      }
+
+      firstFrame(incoming, function () {
         if (token !== boundaryToken) return
-        try {
-          outgoing.pause()
-        } catch (error) {
-          /* 忽略 */
-        }
-      }, 460)
+        logDebug('首帧 ✓ ' + decision.clip + ' · 淡出 ' + fadeMs + 'ms')
+        outgoing.setAttribute('data-hide', '')
+        setTimeout(function () {
+          // 停旧元素与 token 无关：过期只代表这次淡出被下一次换片接管了，元素还是要停
+          try {
+            outgoing.pause()
+          } catch (error) {
+            /* 忽略 */
+          }
+          if (token !== boundaryToken) return
+          outgoing.removeAttribute('data-top')
+          incoming.setAttribute('data-top', '')
+        }, fadeMs + 20)
+      })
     }
 
     if (incoming.dataset.clip === decision.clip && incoming.readyState >= 2) {
@@ -335,7 +404,9 @@
     if (!snap || !snap.current) return
     if (snap.current.state !== 'approval') return
     if (currentChosenState === 'approval') return
-    playClip(decideNext())
+    var plan = decideNext()
+    if (plan && plan.state === 'approval') playClip(plan, { fadeMs: 120 })
+    else playClip(plan)
   }
 
   function applySnapshot(snap) {
@@ -760,6 +831,8 @@
     pools = normalizePools()
     for (var slot = 0; slot < 2; slot += 1) {
       var el = makeVideoElement('dgt-video-' + (slot === 0 ? 'a' : 'b'))
+      // 起播前先藏起来：有 src 之前元素会画成一块黑
+      el.setAttribute('data-hide', '')
       videos.push(el)
       stage.appendChild(el)
     }
@@ -1236,6 +1309,8 @@
         } catch (error) {
           /* 暂停失败不影响卸载 */
         }
+        el.removeAttribute('data-top')
+        el.removeAttribute('data-hide')
         el.removeAttribute('src')
         try {
           el.load()
@@ -1292,7 +1367,11 @@
 
   addEventListener('keydown', function (event) {
     if (!event.ctrlKey || !event.altKey) return
-    var key = String(event.key || '').toLowerCase()
+    // 认字母只能用 code，不能用 key：macOS 的 Option(⌥) 是输入修饰键，按住 ⌥ 时
+    // key 已被改写成它要输入的字符（⌥B →「∫」、⌥M →「µ」），`key === 'b'` 在 mac
+    // 上永远不成立。code 是物理键位，不随布局和修饰键变化。
+    var byCode = /^Key([A-Z])$/.exec(String(event.code || ''))
+    var key = byCode ? byCode[1].toLowerCase() : String(event.key || '').toLowerCase()
     if (key === 'b') {
       event.preventDefault()
       toggle()

@@ -60,7 +60,14 @@ html[data-dgt='on'] body {
   pointer-events: none;
 }
 
-/* 双 video 共用一套几何：换素材靠 data-shown 在两个元素间迁移，不 seek、不设 loop。 */
+/* 双 video 共用一套几何：换素材靠 data-top / data-hide 在两个元素间迁移，不 seek、不设 loop。
+   叠放口径（换片不黑的关键）：
+   - 基础态 = 不透明、在下（z-index:0）。新元素一挂上就不透明，但被旧元素盖住，本身不产生视觉变化。
+   - [data-top]   = 当前这一层在上面。
+   - [data-hide]  = 正在淡出的那一层（唯一带 opacity 过渡的状态）。
+   - [data-instant] = 预备阶段瞬时归位用，跳过过渡，避免"归位"本身变成一次闪烁。
+   于是换片只有"旧元素淡出、露出下面已经在放的新元素"一次动作，
+   不会出现"新元素带着空帧浮到上面"的黑屏。 */
 .dgt-video {
   position: absolute;
   top: 0;
@@ -70,14 +77,23 @@ html[data-dgt='on'] body {
   object-fit: cover;
   /* 人物偏右：焦点由 JS 按配置写入 */
   object-position: var(--dgt-focus, 78% 40%);
-  opacity: 0;
+  opacity: 1;
+  z-index: 0;
   /* 400ms 与状态机的交叉淡入同一档，改一处就要改两处 */
   transition: opacity 400ms ease;
   background: transparent;
 }
 
-.dgt-video[data-shown='1'] {
-  opacity: 1;
+.dgt-video[data-top] {
+  z-index: 1;
+}
+
+.dgt-video[data-hide] {
+  opacity: 0;
+}
+
+.dgt-video[data-instant] {
+  transition: none;
 }
 
 /* 玻璃层的四块：DOM 顺序即叠放顺序（scrim-side → scrim-conv → sheet → seam → glow），

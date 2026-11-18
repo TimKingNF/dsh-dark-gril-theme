@@ -1,6 +1,6 @@
 # 进度总结
 
-> 快照：2026-11-15 16:45（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`。规格修订 #15（写配置第二道门：GUI 中继会吞 Origin，改以 application/json 为主判据）
+> 快照：2026-11-19 00:45（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`；已发 tag `v0.1.0`。规格修订 #17（换片黑帧：首帧门闩 + 显式叠放顺序）
 
 ## 一句话状态
 
@@ -211,6 +211,13 @@
 > ④ npm 发布没成：本机 `npm whoami` 报 `ENEEDAUTH`，且 registry 指向华为云镜像 `https://mirrors.huaweicloud.com/repository/npm/`（镜像不收包）。要真发 npm 需先 `npm config set registry https://registry.npmjs.org` 再 `npm login`。
 > ⑤ 沙箱里 `dsh plugin` 本身跑不了：写 `~/.dsh/profiles/web/package.json.lock` 时报 `EROFS: read-only file system`，所以 README 的安装步骤只验到参数解析，没真装一遍（限制 10 仍成立）。
 > ⑥ `git push origin main` 与 `git push origin v0.1.0` 都成功，tag `v0.1.0` 已到远端。
+> 修订 #17 · 2026-11-19 00:45。修换片黑帧。用户原话（00:07）：「现在两个视频前后播放切换的时候，会出现几帧的黑屏 闪烁，研究并思考如何解决这个问题」。
+> ① 根因两条，都在 `playClip()`：旧实现一听 `canplay` 就 `play()` 并给新元素打 `data-shown`（opacity 0→1 淡入），同时撤掉旧元素的 `data-shown`（1→0 淡出）。第一，`canplay` 只保证 `readyState≥3`，首帧真正提交给合成器还要 1–2 帧，那几帧里新元素是**空帧**；第二，两个 `<video>` 都不带 `z-index`，DOM 顺序即叠放顺序，`dgt-video-b` 后建所以永在 `a` 之上——第一次换片 incoming 正好是 `b`，于是"空帧 + 压在上层 + 正在淡入"三件事同时发生，就是用户看到的那几帧黑。
+> ② 改法「垫着淡」：新元素先以「不透明、`z-index:0`、在下」的形态垫好（旧元素仍带 `data-top` 盖住它），等新元素**真有帧呈现**——用 `requestVideoFrameCallback` + 一帧 `requestAnimationFrame` 判定，400ms 兜底——才给旧元素打 `data-hide` 淡出。层次由属性表达：`[data-top]` z-index:1、`[data-hide]` opacity:0、`[data-instant]` transition:none；基础态恒为 `opacity:1; z-index:0`。首次起播没有旧元素可淡出，等首帧到了再瞬时点亮。`approval` 硬切走 `{fadeMs:120}`。
+> ③ 顺带修一处泄漏：旧代码把 `outgoing.pause()` 写进 token 校验之后，若期间又来一次换片，上一个 outgoing 永远不会被暂停，会一直在后台解码耗电。改成 `pause()` 与 token 解耦（无条件执行），只有 `data-top` 迁移仍受 token 保护。
+> ④ 验证（bsk 前台窗口 1440×900，真实播放态）：页面内 1200 帧 rAF 采样跨 8.6s 两个换片边界，**两层同时不可见的帧 = 0**；屏幕录制 25s / 322 帧，视频区（560,180–1060,760）逐帧平均亮度 min 50.0、p5 50.8、中位 55.2、max 57.0，**没有任何一帧低于是前后 5 帧中位数的 92%**，也没有整帧三通道 <8；换片处亮度是 50.0→51.3→52.3→53.1→54.1→55.5→55.8 的单调过渡，即交叉淡入本身，不是切换台阶。
+> ⑤ 教训：判断"能不能显示"必须用「首帧真的进了合成器」这个信号（rVFC），`canplay` / `loadeddata` / `readyState` 都是"数据够了"，不是"画面有了"；两个视频层叠放顺序不能靠 DOM 顺序，要显式 `z-index` 并在换片时迁移。
+
 **架构**：状态机放 host（`ctx.on` 只在 host 侧可用），host 只推**态名 + seq + time**；桶映射与轮播在 client（`runtime/bg.js`）。SSE 失败降级 1s 轮询。
 
 **状态源**：`agent/assistant-stream` + `tools/execute` + `approval/request`（waterfall，必须 `return next()`）+ `agent/status` / `uiSession.sessionStatus`（兜底纠偏）。
@@ -263,6 +270,7 @@
 | `7523614` | 修订 #15：写配置补 `application/json` 门（GUI 中继会吞 Origin） |
 | `d2b7b34` | 修订 #16：许可改 GPL-3.0-or-later、README 改 npm 安装口径、tag `v0.1.0` |
 | `a281dd0` | docs：`dsh plugin` 的 `--profile` 必须写在 `add` 之前 |
+| `efb8581` | 修订 #17：换片黑帧修复（首帧门闩 + 显式叠放顺序 + pause 泄漏） |
 
 ## 下一步
 
