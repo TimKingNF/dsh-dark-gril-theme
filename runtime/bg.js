@@ -104,6 +104,8 @@
   var DIP_OUT_MS = 400
   /** 失焦的默认时长；和 dip 一样可由配置覆盖。 */
   var BLUR_MS = 600
+  /** 给模糊留的溢出边（CSS px）：video 比 stage 大一圈，模糊的边缘落在裁切区外。 */
+  var BLUR_BLEED = 24
   /** 失焦过渡的峰值模糊半径（CSS px）。 */
   var BLUR_PX = 16
   /** 配置里写死过的时长（走 CONFIG，缺省用上面的常量）。 */
@@ -522,11 +524,9 @@
     if (!el) return
     if (px <= 0) {
       el.style.filter = ''
-      el.style.transform = ''
       return
     }
     el.style.filter = 'blur(' + px + 'px)'
-    el.style.transform = 'scale(1.04)'
   }
 
   function clearBlur(el) {
@@ -1490,13 +1490,17 @@
     // 不写 px 宽高——写了就得靠 JS 追每一次窗口变化，追漏一次就是"窗口变大、视频没变"。
     // 现在窗口怎么变，浏览器自己重排，JS 只需要改 stage 的宽度（=接缝位置）。
     var focus = fx + '% ' + fy + '%'
+    // 每块 video 比 stage 四周各大 BLUR_BLEED 像素：css blur 会把元素边缘采样成半透明，
+    // 正好宽出一圈，模糊的边缘就落在 stage 的 overflow:hidden 之外，不会在画面边沿露出一道暗边。
+    // 用几何而不是 transform:scale 来留这一圈——scale 会在过渡里把整个人放大再缩回去。
+    var bleed = BLUR_BLEED
     videos.forEach(function (el) {
       el.style.objectFit = 'cover'
       el.style.objectPosition = focus
-      el.style.width = '100%'
-      el.style.height = '100%'
-      el.style.left = '0px'
-      el.style.top = '0px'
+      el.style.width = 'calc(100% + ' + (bleed * 2) + 'px)'
+      el.style.height = 'calc(100% + ' + (bleed * 2) + 'px)'
+      el.style.left = -bleed + 'px'
+      el.style.top = -bleed + 'px'
       el.setAttribute('data-focus', fx + '%/' + fy + '%')
     })
     host.stage.style.left = (offsetX || 0) + 'px'
