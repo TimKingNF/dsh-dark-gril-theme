@@ -95,7 +95,7 @@ cp /tmp/dgt-assets/*.webm ~/.dsh/dsh-dark-gril-theme/assets/
 | 快捷键 | 作用 |
 | --- | --- |
 | `Ctrl + Alt + M` | 在 dark / beautify 之间切换（与设置页开关同一份配置） |
-| `Ctrl + Alt + T` | 换片过渡：`dip`（先压暗盖住再揭，默认）/ `cross`（两段直接叠着淡） |
+| `Ctrl + Alt + T` | 换片过渡轮换：`dip` 压暗（默认）/ `wipe` 柔边擦除 / `blur` 失焦 / `cross` 叠淡 |
 | `Ctrl + Alt + B` | 临时关掉整个背景层，不写配置，再按回来 |
 
 ## 调试浮窗

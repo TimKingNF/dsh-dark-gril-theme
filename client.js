@@ -38,11 +38,13 @@ window.__ModuleLoader__.load({
         label: '换片过渡',
         kind: 'enum',
         options: [
-          { value: 'dip', label: '过暗一闪' },
-          { value: 'cross', label: '直接叠淡' },
+          { value: 'dip', label: '压暗' },
+          { value: 'wipe', label: '擦除' },
+          { value: 'blur', label: '失焦' },
+          { value: 'cross', label: '叠淡' },
         ],
-        hint: '过暗一闪 = 先压暗盖住、在盖住的那一刻换元素、再揭开（默认，两段素材里人物位置不同也不容易被看见）。'
-          + '直接叠淡 = 旧做法，两段同时半透明交叉。快捷键 Ctrl + Alt + T 原地切。',
+        hint: '压暗 = 盖住→换元素→揭开（亮度会短暂降一下）；擦除 = 新画面带羽化边扫进来，同一像素永远只有一帧，亮度不变；'
+          + '失焦 = 先糊掉再换再清回来；叠淡 = 两段直接交叉（会看出两个影子）。快捷键 Ctrl + Alt + T 轮换，试完告诉我哪个当默认。',
       },
       {
         key: 'dipInMs',
@@ -63,6 +65,26 @@ window.__ModuleLoader__.load({
         step: 10,
         unit: 'ms',
         hint: '压暗之后再揭开的时间。比压暗长会更"呼吸"，太短会读成闪一下。两者之和决定每次换片占用多久（当前边界提前量会跟着自动放大）。',
+      },
+      {
+        key: 'wipeMs',
+        label: '擦除时长',
+        kind: 'number',
+        min: 0,
+        max: 1600,
+        step: 20,
+        unit: 'ms',
+        hint: '新画面从左侧扫进来的时间。太短像甩了一下，太长会拖。擦除没有压暗，所以它主要看"扫得顺不顺"。',
+      },
+      {
+        key: 'blurMs',
+        label: '失焦时长',
+        kind: 'number',
+        min: 0,
+        max: 1600,
+        step: 20,
+        unit: 'ms',
+        hint: '糊掉 + 清回来的总时长（约 45% 用来糊、55% 用来清）。糊到 16px 的峰值是固定的，只调快慢。',
       },
       {
         key: 'debug',
@@ -102,6 +124,9 @@ window.__ModuleLoader__.load({
         }
         if (key === 'transition' && typeof api.setTransition === 'function') {
           api.setTransition(value, false)
+        }
+        if ((key === 'wipeMs' || key === 'blurMs') && typeof api.setTiming === 'function') {
+          api.setTiming(key, Number(value), false)
         }
       } catch {
         /* 运行时自己坏了不该顶掉设置页 */

@@ -78,6 +78,8 @@
   var boundaryToken = 0
   var boundaryWatch = 0
   var advancing = false
+  /** advancing 的起始时刻：过渡路径被中途放弃时靠它自救，避免整台机器卡死。 */
+  var advancingSince = 0
   /**
    * 边界提前量：还差这么多毫秒就把下一段换上来，绝不等到 `ended`。
    *
@@ -99,6 +101,12 @@
    */
   var DIP_IN_MS = 250
   var DIP_OUT_MS = 400
+  /** 擦除与失焦的默认时长；和 dip 一样可由配置覆盖。 */
+  var WIPE_MS = 600
+  var BLUR_MS = 600
+  /** 失焦过渡的峰值模糊半径（CSS px）与擦除边的羽化宽度（百分比）。 */
+  var BLUR_PX = 16
+  var WIPE_FEATHER = 12
   /** 配置里写死过的时长（走 CONFIG，缺省用上面的常量）。 */
   function dipTiming() {
     var inMs = typeof CONFIG.dipInMs === 'number' && isFinite(CONFIG.dipInMs) ? CONFIG.dipInMs : DIP_IN_MS
@@ -114,11 +122,29 @@
    * 甚至换完那一刻旧元素已经播完（就是最初的黑帧）。所以取「过渡总长 + 60ms 余量」
    * 与 450ms 的较大值。
    */
+  /** 读一个毫秒配置项，缺省回落到常量，clamp 到 0–2000。 */
+  function cfgMs(key, fallback) {
+    var v = typeof CONFIG[key] === 'number' && isFinite(CONFIG[key]) ? CONFIG[key] : fallback
+    return Math.max(0, Math.min(2000, Math.round(v)))
+  }
+
   function boundaryLeadMs() {
     var t = dipTiming()
-    return transition === 'dip' ? Math.max(BOUNDARY_LEAD_MS, t.inMs + t.outMs + 60) : BOUNDARY_LEAD_MS
+    if (transition === 'dip') return Math.max(BOUNDARY_LEAD_MS, t.inMs + t.outMs + 60)
+    if (transition === 'wipe') return Math.max(BOUNDARY_LEAD_MS, cfgMs('wipeMs', WIPE_MS) + 60)
+    if (transition === 'blur') return Math.max(BOUNDARY_LEAD_MS, cfgMs('blurMs', BLUR_MS) + 60)
+    return BOUNDARY_LEAD_MS
   }
   var TRANSITION_KEY = 'dgt-transition'
+  /** 四种过渡，Ctrl+Alt+T 按这个顺序轮换。 */
+  var TRANSITIONS = ['dip', 'wipe', 'blur', 'cross']
+  var TRANSITION_LABELS = { dip: '过暗一闪', wipe: '柔边擦除', blur: '失焦', cross: '直接叠淡' }
+  function normalizeTransition(value) {
+    for (var i = 0; i < TRANSITIONS.length; i += 1) {
+      if (TRANSITIONS[i] === value) return value
+    }
+    return 'dip'
+  }
   var transition = 'dip'
   /** 过暗一闪的遮盖层，几何跟随 stage（inset:0），不需要单独摆位。 */
   var dipEl = null
@@ -286,6 +312,10 @@
     boundaryWatch = requestAnimationFrame(function step() {
       boundaryWatch = 0
       if (!enabled || !video) return
+      if (advancing && advancingSince && Date.now() - advancingSince > 3000) {
+        logDebug('边界看门狗 · advancing 卡了 3s，强制复位')
+        advancing = false
+      }
       var el = video
       var total = el.duration
       if (!advancing && isFinite(total) && total > 0 && !el.paused) {
@@ -302,8 +332,9 @@
 
   /** 边界动作：抽下一段并换上去。重复触发由 advancing 挡住。 */
   function advance() {
-    if (advancing) return
+    if (advancing && Date.now() - advancingSince < 3000) return
     advancing = true
+    advancingSince = Date.now()
     var plan = takeNext()
     if (!plan) {
       advancing = false
@@ -430,6 +461,61 @@
     }
   }
 
+  /** 擦除的遮盖：黑=可见到 pct 为止，之后渐隐到透明，羽化宽 WIPE_FEATHER%。 */
+  function applyWipeMask(el, pct) {
+    var p = Math.max(0, Math.min(100, pct))
+    var edge = Math.min(100, p + WIPE_FEATHER)
+    var css =
+      'linear-gradient(90deg, #000 0%, #000 ' +
+      p.toFixed(2) +
+      '%, rgba(0,0,0,0) ' +
+      edge.toFixed(2) +
+      '%, rgba(0,0,0,0) 100%)'
+    el.style.webkitMaskImage = css
+    el.style.maskImage = css
+  }
+
+  function clearWipeMask(el) {
+    el.style.webkitMaskImage = ''
+    el.style.maskImage = ''
+  }
+
+  /** rAF 推遮盖位置：不依赖 @property 注册，老 Chromium 也照跑。 */
+  function animateWipe(el, ms, done) {
+    if (ms <= 0) {
+      applyWipeMask(el, 100)
+      done()
+      return
+    }
+    var start = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    function step(now) {
+      var t = Math.min(1, (now - start) / ms)
+      applyWipeMask(el, t * 100)
+      if (t < 1) requestAnimationFrame(step)
+      else done()
+    }
+    requestAnimationFrame(step)
+  }
+
+  /** 失焦：模糊半径 + 一点点放大（视频被 blur 后边缘会露透明缝，放大盖住）。 */
+  function setBlur(el, px) {
+    if (!el) return
+    if (px <= 0) {
+      el.style.filter = ''
+      el.style.transform = ''
+      return
+    }
+    el.style.filter = 'blur(' + px + 'px)'
+    el.style.transform = 'scale(1.04)'
+  }
+
+  function clearBlur(el) {
+    if (!el) return
+    el.style.transition = ''
+    el.style.filter = ''
+    el.style.transform = ''
+  }
+
   function playClip(decision, opts) {
     if (!decision || videos.length === 0) return
     var fadeMs = opts && isFinite(opts.fadeMs) ? opts.fadeMs : 400
@@ -440,6 +526,8 @@
     var firstRun = !hasStarted || !outgoing || outgoing === incoming
     // 首次起播没有旧元素可盖，硬切本来就是对的，不走 over-dark
     var useDip = !firstRun && transition === 'dip' && !!dipEl
+    var useWipe = !firstRun && transition === 'wipe'
+    var useBlur = !firstRun && transition === 'blur'
 
     function commit() {
       if (token !== boundaryToken) return
@@ -488,6 +576,100 @@
           dipEl.style.transition = 'opacity ' + outMs + 'ms linear'
           dipEl.style.opacity = '0'
         }, inMs)
+        return
+      }
+
+      if (useWipe) {
+        // 擦除：新元素带羽化边从左侧扫入，同一像素永远只有一帧，不存在重影。
+        var wipeMs = cfgMs('wipeMs', WIPE_MS)
+        try {
+          incoming.currentTime = 0
+        } catch (error) {
+          /* 元数据没就绪时忽略 */
+        }
+        incoming.setAttribute('data-instant', '')
+        incoming.removeAttribute('data-hide')
+        incoming.setAttribute('data-top', '')
+        void incoming.offsetWidth
+        incoming.removeAttribute('data-instant')
+        applyWipeMask(incoming, 0)
+        var wiped = incoming.play()
+        if (wiped && typeof wiped.catch === 'function') {
+          wiped.catch(function (error) {
+            warn('素材未能自动播放：' + String(error))
+          })
+        }
+        adoptClip(decision, nextIndex, incoming)
+        logDebug('擦除 · ' + wipeMs + 'ms')
+        animateWipe(incoming, wipeMs, function () {
+          clearWipeMask(incoming)
+          outgoing.setAttribute('data-instant', '')
+          outgoing.setAttribute('data-hide', '')
+          outgoing.removeAttribute('data-top')
+          void outgoing.offsetWidth
+          outgoing.removeAttribute('data-instant')
+          try {
+            outgoing.pause()
+          } catch (error) {
+            /* 忽略 */
+          }
+        })
+        return
+      }
+
+      if (useBlur) {
+        // 失焦：旧元素先糊掉（它仍盖在上面），糊满那一刻换成同样糊着的新元素，再清回来。
+        // 换的那一瞬间两帧都糊成一团，姿态差异读不出来。
+        var blurMs = cfgMs('blurMs', BLUR_MS)
+        var rampMs = Math.max(60, Math.round(blurMs * 0.45))
+        var settleMs = Math.max(60, blurMs - rampMs)
+        // 新元素先垫在下面、提前糊好，换上去的时候已经是最终形态
+        incoming.setAttribute('data-instant', '')
+        incoming.removeAttribute('data-hide')
+        incoming.removeAttribute('data-top')
+        setBlur(incoming, BLUR_PX)
+        try {
+          incoming.currentTime = 0
+        } catch (error) {
+          /* 元数据没就绪时忽略 */
+        }
+        void incoming.offsetWidth
+        incoming.removeAttribute('data-instant')
+        var blurred = incoming.play()
+        if (blurred && typeof blurred.catch === 'function') {
+          blurred.catch(function (error) {
+            warn('素材未能自动播放：' + String(error))
+          })
+        }
+        logDebug('失焦 · 糊 ' + rampMs + 'ms → 换 → 清 ' + settleMs + 'ms')
+        outgoing.style.transition = 'filter ' + rampMs + 'ms linear, transform ' + rampMs + 'ms linear'
+        setBlur(outgoing, BLUR_PX)
+        setTimeout(function () {
+          // 换片这一步必须无条件完成：它顺带把 advancing 复位，中途 return 会让整台机器停摆。
+          var stale = token !== boundaryToken
+          adoptClip(decision, nextIndex, incoming)
+          incoming.setAttribute('data-instant', '')
+          incoming.setAttribute('data-top', '')
+          incoming.removeAttribute('data-hide')
+          outgoing.setAttribute('data-instant', '')
+          outgoing.setAttribute('data-hide', '')
+          outgoing.removeAttribute('data-top')
+          void outgoing.offsetWidth
+          incoming.removeAttribute('data-instant')
+          outgoing.removeAttribute('data-instant')
+          try {
+            outgoing.pause()
+          } catch (error) {
+            /* 忽略 */
+          }
+          clearBlur(outgoing)
+          incoming.style.transition = 'filter ' + settleMs + 'ms linear, transform ' + settleMs + 'ms linear'
+          setBlur(incoming, 0)
+          if (stale) return
+          setTimeout(function () {
+            clearBlur(incoming)
+          }, settleMs + 40)
+        }, rampMs)
         return
       }
 
@@ -949,19 +1131,19 @@
         : '—',
     )
     var t = dipTiming()
-    debugSet(
-      'boundary',
-      transition === 'dip'
-        ? '盖 ' + t.inMs + ' / 揭 ' + t.outMs + 'ms · 提前 ' + boundaryLeadMs() + 'ms'
-        : '直接叠淡 · 提前 ' + boundaryLeadMs() + 'ms',
-    )
+    var timingLine
+    if (transition === 'dip') timingLine = '盖 ' + t.inMs + ' / 揭 ' + t.outMs + 'ms'
+    else if (transition === 'wipe') timingLine = '扫 ' + cfgMs('wipeMs', WIPE_MS) + 'ms'
+    else if (transition === 'blur') timingLine = '糊清 ' + cfgMs('blurMs', BLUR_MS) + 'ms'
+    else timingLine = '叠淡 400ms'
+    debugSet('boundary', timingLine + ' · 提前 ' + boundaryLeadMs() + 'ms')
 
     var sub = document.getElementById('dgt-debug-sub')
     if (sub) {
       // 空字段直接跳过：没起播时 currentChosenState 是空串，别留下两个连着的圆点。
       var parts = [
         mode,
-        transition === 'cross' ? '直接叠淡' : '过暗一闪',
+        TRANSITION_LABELS[transition] || '过暗一闪',
         currentChosenState,
         sourceKind,
         hasStarted ? '' : '未起播',
@@ -1216,10 +1398,10 @@
    * 后者留着做对照。都只动元素可见性，不重新编码素材。
    */
   function applyTransition(next, persist) {
-    var name = next === 'cross' ? 'cross' : 'dip'
+    var name = normalizeTransition(next)
     transition = name
-    if (dipEl && name === 'cross') {
-      // 切到 cross 时把遮盖层归零，否则上一次过暗留下的半透明会一直挂着
+    if (dipEl && name !== 'dip') {
+      // 离开 dip 时把遮盖层归零，否则上一次过暗留下的半透明会一直挂着
       dipEl.style.transition = 'none'
       dipEl.style.opacity = '0'
     }
@@ -1230,11 +1412,29 @@
   }
 
   function readTransition() {
-    return CONFIG.transition === 'cross' ? 'cross' : 'dip'
+    return normalizeTransition(CONFIG.transition)
   }
 
+  /** Ctrl+Alt+T：按 dip → wipe → blur → cross 轮换。 */
   function toggleTransition() {
-    return applyTransition(transition === 'dip' ? 'cross' : 'dip', true)
+    var at = TRANSITIONS.indexOf(transition)
+    var next = TRANSITIONS[(at + 1) % TRANSITIONS.length]
+    return applyTransition(next, true)
+  }
+
+  /** 擦除 / 失焦的时长（毫秒）。设置页滑块走这里。 */
+  function setTiming(key, value, persist) {
+    if (key !== 'wipeMs' && key !== 'blurMs') return null
+    if (typeof value !== 'number' || !isFinite(value)) return null
+    var clamped = Math.max(0, Math.min(2000, Math.round(value)))
+    CONFIG[key] = clamped
+    if (persist) {
+      var patch = {}
+      patch[key] = clamped
+      persistConfig(patch)
+    }
+    renderDebug()
+    return clamped
   }
 
   /**
@@ -1649,6 +1849,7 @@
     toggleMode: toggleMode,
     setDebug: setDebug,
     setTransition: applyTransition,
+    setTiming: setTiming,
     toggleTransition: toggleTransition,
     setDip: setDip,
     retryPlay: function () {

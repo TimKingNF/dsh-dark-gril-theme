@@ -24,6 +24,8 @@ test('dip 时长与过渡方式都有默认值', () => {
   assert.equal(DEFAULTS.transition, 'dip')
   assert.equal(DEFAULTS.dipInMs, 250)
   assert.equal(DEFAULTS.dipOutMs, 400)
+  assert.equal(DEFAULTS.wipeMs, 600)
+  assert.equal(DEFAULTS.blurMs, 600)
 })
 
 test('dip 时长超界或非数字被拒，过渡方式只认两个值', () => {
@@ -34,6 +36,15 @@ test('dip 时长超界或非数字被拒，过渡方式只认两个值', () => {
   })
   assert.deepEqual(sanitizePatch({ dipInMs: 5000, dipOutMs: -1, transition: 'zzz' }), {})
   assert.deepEqual(sanitizePatch({ dipInMs: '400' }), {})
+})
+
+test('四种过渡都收，第五种拒收', () => {
+  for (const kind of ['dip', 'wipe', 'blur', 'cross']) {
+    assert.deepEqual(sanitizePatch({ transition: kind }), { transition: kind })
+  }
+  assert.deepEqual(sanitizePatch({ transition: 'fade' }), {})
+  assert.deepEqual(sanitizePatch({ wipeMs: 700, blurMs: 500 }), { wipeMs: 700, blurMs: 500 })
+  assert.deepEqual(sanitizePatch({ wipeMs: 2001 }), {})
 })
 
 test('只收白名单里的合法键', () => {
