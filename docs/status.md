@@ -1,6 +1,6 @@
 # 进度总结
 
-> 快照：2026-11-20 01:35（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`；已发 tag `v0.1.0`。规格修订 #23（擦除下线，过渡回到三种：压暗 / 失焦 / 叠淡；修掉「播完不动」的 canplay 竞态）
+> 快照：2026-11-20 01:55（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`；已发 tag `v0.1.0`。规格修订 #24（默认换成「叠淡 + 不打光」，设置页每次改动都落盘）
 
 ## 一句话状态
 
@@ -308,7 +308,8 @@
 | `f5b87d0` | 修订 #20：dip 两段时长做成配置项（默认 250/400）+ 设置页三条控件 |
 | `fe34da8` | 修订 #21：四种换片过渡（压暗 / 柔边擦除 / 失焦 / 叠淡）+ `wipeMs`/`blurMs` + advancing 看门狗 |
 | `5856d78` | 修订 #22：擦除重做——遮罩从 `<video>` 移到外层裁切容器的 `clip-path`，推进由 rAF 改 CSS transition |
-| 本次 | 修订 #23：擦除下线（硬边观感被否），修失焦「播完不动」的 `canplay` 竞态，补播放守护 |
+| `f3ce58d` | 修订 #23：擦除下线（硬边观感被否），修失焦「播完不动」的 `canplay` 竞态，补播放守护 |
+| 本次 | 修订 #24：默认改「叠淡 + 不打光」；设置卡片改动全部落盘（applyLive 不再走 persist=false） |
 
 ## 修订 #22（2026-11-20 01:20）：擦除换实现
 
@@ -354,6 +355,18 @@
 
 - `node --check runtime/bg.js`、`node --check client.js` 通过；`npm test` **52 pass / 0 fail**。
 - **真机/可见窗口的连续播放未验**：这台机器上 bsk 的 agent 窗口本轮一直是 `visibilityState=hidden`（`EnumWindows` 里也找不到该窗口），hidden 下 rAF 与媒体都停，测不出播放行为。请在你自己的窗口里刷新后看失焦换片是否连续。
+
+## 修订 #24（2026-11-20 01:55）：默认叠淡 + 不打光，设置一律落盘
+
+用户 m02994：「把叠淡、不打光设置为默认设置，并且在每次切换之后保存设置，而不是一刷新就切回原样」。
+
+- `lib/config.js` 的 `DEFAULTS` 改两处：`transition: 'cross'`、`glow: 0`。`glow: 0` 只在 dark 观感生效（`DIM_MODES.dark.glow`），beautify 仍是 1——想恢复打光就 `Ctrl + Alt + M` 切观感，不用去改配置文件。
+- 落盘：设置卡片的 `applyLive()` 原来给运行时传 `persist: false`，等于「页面上立刻变、但只有卡片自己那次 POST 记得住」；现在五个入口（`setMode` / `setDebug` / `setDip` / `setTransition` / `setTiming`）全部传 `true`，运行时自己也会把当前值 POST 回 `configUrl`。快捷键（`Ctrl+Alt+T` 轮换过渡、`Ctrl+Alt+M` 切观感、`Ctrl+Alt+B` 开关）本来就带 `persist: true`，两条路径现在一致。
+- 落盘路径唯一：`POST /dsh-dark-gril-theme/config.json` → `writeConfig()` 原子写 `$DSH_HOME/dsh-dark-gril-theme.json`。页面不存 localStorage 的第二份值，所以刷新一定读到刚写的那份。
+- 已有配置文件的兼容：用户现存的 `dsh-dark-gril-theme.json` 里 `glow` 显式是 `1`，DEFAULTS 改不动它——这次直接把该键写成 `0`（已确认落盘），否则「默认」在这台机器上永远不会生效。
+- `npm test` **52 pass / 0 fail**（`tests/config.test.mjs` 的默认值断言同步改成 `cross` + `glow === 0`）。
+
+未验：真机刷新后看一眼「叠淡 + 无光斑」的实际观感；DEFAULTS 是 host 侧模块，**新装/缺键场景要重启 DSH 才按新默认走**，这台机器因为键都显式存在，刷新即可。
 
 ## 下一步
 

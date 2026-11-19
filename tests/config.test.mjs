@@ -21,7 +21,8 @@ test('默认值里两个开关都是关', () => {
 })
 
 test('dip 时长与过渡方式都有默认值', () => {
-  assert.equal(DEFAULTS.transition, 'dip')
+  assert.equal(DEFAULTS.transition, 'cross')
+  assert.equal(DEFAULTS.glow, 0)
   assert.equal(DEFAULTS.dipInMs, 250)
   assert.equal(DEFAULTS.dipOutMs, 400)
   assert.equal(DEFAULTS.blurMs, 600)

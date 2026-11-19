@@ -102,20 +102,20 @@ window.__ModuleLoader__.load({
       if (api === undefined || api === null) return
       try {
         if (key === 'beautify' && typeof api.setMode === 'function') {
-          api.setMode(value === true ? 'beautify' : 'dark', false)
+          api.setMode(value === true ? 'beautify' : 'dark', true)
         }
         if (key === 'debug' && typeof api.setDebug === 'function') {
-          api.setDebug(value === true, false)
+          api.setDebug(value === true, true)
         }
         if ((key === 'dipInMs' || key === 'dipOutMs') && typeof api.setDip === 'function' && config) {
           // 两个值是配对的，改一个也要把另一个的当前值一起交回去
-          api.setDip(Number(config.dipInMs), Number(config.dipOutMs), false)
+          api.setDip(Number(config.dipInMs), Number(config.dipOutMs), true)
         }
         if (key === 'transition' && typeof api.setTransition === 'function') {
-          api.setTransition(value, false)
+          api.setTransition(value, true)
         }
         if (key === 'blurMs' && typeof api.setTiming === 'function') {
-          api.setTiming(key, Number(value), false)
+          api.setTiming(key, Number(value), true)
         }
       } catch {
         /* 运行时自己坏了不该顶掉设置页 */
