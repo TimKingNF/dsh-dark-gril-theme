@@ -306,7 +306,27 @@
 | `efb8581` | 修订 #17：换片黑帧修复（首帧门闩 + 显式叠放顺序 + pause 泄漏） |
 | `1302f9a` | 修订 #18：换片闪烁修复（提前量换片 + 合成层提示） |
 | `f5b87d0` | 修订 #20：dip 两段时长做成配置项（默认 250/400）+ 设置页三条控件 |
-| 本次 | 修订 #21：四种换片过渡（压暗 / 柔边擦除 / 失焦 / 叠淡）+ `wipeMs`/`blurMs` + advancing 看门狗 |
+| `fe34da8` | 修订 #21：四种换片过渡（压暗 / 柔边擦除 / 失焦 / 叠淡）+ `wipeMs`/`blurMs` + advancing 看门狗 |
+| 本次 | 修订 #22：擦除重做——遮罩从 `<video>` 移到外层裁切容器的 `clip-path`，推进由 rAF 改 CSS transition |
+
+## 修订 #22（2026-11-20 01:20）：擦除换实现
+
+用户报两个症状：擦除时人物「闪一下放大再缩小」、然后「卡住无法继续播放」。两条各自有独立原因，都不是时长参数的问题：
+
+1. **放大闪烁**：原实现把 `mask-image` 直接加在 `<video>` 上。视频层本来靠 `translateZ(0)` 常驻合成层，一加遮罩浏览器必须为它重建一个带 mask 的合成层，重建那一帧按不同栅格尺度出图——肉眼就是一次缩放跳变。擦除路径本身没有任何 `transform`（`scale(1.04)` 只属于失焦分支），所以几何变化只能来自这次层重建。
+2. **卡住**：原实现的推进是 `animateWipe()` 用 `requestAnimationFrame` 逐帧改遮罩百分比。rAF 一停（窗口被判定不可见、掉帧、合成器繁忙），`done()` 永远不执行：旧元素既不 `pause()` 也不隐藏，遮罩冻结在半途，画面永久停在「左边新片、右边旧片」的截断状态。dip 用 CSS transition，暂停也会自己走完，所以没有这个死结。
+
+改法：
+
+- `buildHost()` 给每个 `<video>` 套一层 `.dgt-clip`（`position:absolute; inset:0; overflow:hidden`），video 几何不变（仍是 100%×100%）。
+- 擦除改 `wipeClip(wrap, ms)`：`clip-path: inset(0 100% 0 0)` → `inset(0 0 0 0)`，用 CSS `transition: clip-path …ms linear` 推进，**不依赖 JS 帧**。
+- 收尾双保险：`transitionend`（只听 `clip-path`）+ `setTimeout(ms+120)`，`wipedDone` 保证只跑一次；收尾里清裁切、隐藏旧元素、`pause()`。
+- 叠放口径搬到容器上：容器一旦带 `clip-path` 就自成堆叠上下文，内部 video 的 `z-index` 出不来。新增 `markTop()` / `clearTop()`，`data-top` 只写在 video 上（唯一真相），同时镜像到容器；CSS 加 `.dgt-clip[data-top] { z-index: 1 }`。
+- 删掉 `applyWipeMask` / `clearWipeMask` / `animateWipe` / `WIPE_FEATHER`（羽化边一并取消，先要稳）。
+
+实测（bsk uuel / tab 1794833290 / 可见窗口 1936×1166 / dev 注入 + 3099 素材源，40s rAF 连续采样 5427 帧）：4 次擦除分别 608 / 613 / 642 / 597ms，帧数 88 / 88 / 88 / 86，百分比单调 100 → 1；每次收尾后 `clip-path` 归 `none`、`maskImage` 全空、旧元素 `paused=true`、新元素继续播（末帧 t=1.21）。全程无卡死、无残留遮罩。`npm test` 52 pass / 0 fail。
+
+未验：肉眼看扫过时的边缘质感（羽化已去掉，现在是一条硬边）；不同素材对（姿态差异大的 `speaking-confirm`）下观感是否可接受，等用户体验后拍板。
 
 ## 下一步
 

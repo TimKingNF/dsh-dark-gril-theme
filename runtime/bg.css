@@ -96,6 +96,25 @@ html[data-dgt='on'] body {
   z-index: 1;
 }
 
+/* 每个 video 外面那层裁切容器。擦除时只动它的 clip-path：
+   video 自己不加 mask、不加 transform，就不会触发合成层重建（那一帧会被按不同
+   栅格尺度绘制，肉眼是闪一下放大再缩小）。叠放也要落在容器上——容器带上
+   clip-path 后自成堆叠上下文，内部 video 的 z-index 出不来。 */
+.dgt-clip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.dgt-clip[data-top] {
+  z-index: 1;
+}
+
 .dgt-video[data-hide] {
   opacity: 0;
 }

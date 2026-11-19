@@ -106,7 +106,6 @@
   var BLUR_MS = 600
   /** 失焦过渡的峰值模糊半径（CSS px）与擦除边的羽化宽度（百分比）。 */
   var BLUR_PX = 16
-  var WIPE_FEATHER = 12
   /** 配置里写死过的时长（走 CONFIG，缺省用上面的常量）。 */
   function dipTiming() {
     var inMs = typeof CONFIG.dipInMs === 'number' && isFinite(CONFIG.dipInMs) ? CONFIG.dipInMs : DIP_IN_MS
@@ -438,11 +437,29 @@
     schedule()
   }
 
+  /**
+   * 叠放口径要落在裁切容器上，不能只落在 video 上：
+   * 容器一旦带上 clip-path 就会自己成为堆叠上下文，video 的 z-index 只在容器内部生效，
+   * 两个容器之间的上下关系就得由容器自己决定。data-top 只写在 video 上（唯一真相），
+   * 这里顺带把它镜像到容器。
+   */
+  function markTop(el) {
+    if (!el) return
+    el.setAttribute('data-top', '')
+    if (el.__dgtClip) el.__dgtClip.setAttribute('data-top', '')
+  }
+
+  function clearTop(el) {
+    if (!el) return
+    el.removeAttribute('data-top')
+    if (el.__dgtClip) el.__dgtClip.removeAttribute('data-top')
+  }
+
   /** 瞬时摆上屏：不给过渡，"归位"本身就不会变成一次闪。 */
   function snapIn(el) {
     el.setAttribute('data-instant', '')
     el.removeAttribute('data-hide')
-    el.setAttribute('data-top', '')
+    markTop(el)
     void el.offsetWidth
     el.removeAttribute('data-instant')
   }
@@ -451,7 +468,7 @@
   function snapOut(el) {
     el.setAttribute('data-instant', '')
     el.setAttribute('data-hide', '')
-    el.removeAttribute('data-top')
+    clearTop(el)
     void el.offsetWidth
     el.removeAttribute('data-instant')
     try {
@@ -461,40 +478,26 @@
     }
   }
 
-  /** 擦除的遮盖：黑=可见到 pct 为止，之后渐隐到透明，羽化宽 WIPE_FEATHER%。 */
-  function applyWipeMask(el, pct) {
-    var p = Math.max(0, Math.min(100, pct))
-    var edge = Math.min(100, p + WIPE_FEATHER)
-    var css =
-      'linear-gradient(90deg, #000 0%, #000 ' +
-      p.toFixed(2) +
-      '%, rgba(0,0,0,0) ' +
-      edge.toFixed(2) +
-      '%, rgba(0,0,0,0) 100%)'
-    el.style.webkitMaskImage = css
-    el.style.maskImage = css
+  /**
+   * 擦除：动的是 video 外面那层裁切容器的 clip-path，不碰 video 自己。
+   * 用 JS 逐帧推遮罩会踩两个坑：①给 <video> 加 mask 会让浏览器重建它的合成层，
+   * 重建那一帧按不同栅格尺度出图——肉眼就是闪一下放大再缩小；②rAF 一停（窗口被
+   * 判定不可见、掉帧），遮盖就冻结在半途，旧元素既不暂停也不隐藏，画面永久停在
+   * "左边新片、右边旧片"的截断状态。改交 CSS transition 后两件事都不再依赖 JS 帧。
+   */
+  function wipeClip(wrap, ms) {
+    if (!wrap) return
+    wrap.style.transition = 'none'
+    wrap.style.clipPath = 'inset(0 100% 0 0)'
+    void wrap.offsetWidth
+    wrap.style.transition = 'clip-path ' + ms + 'ms linear'
+    wrap.style.clipPath = 'inset(0 0 0 0)'
   }
 
-  function clearWipeMask(el) {
-    el.style.webkitMaskImage = ''
-    el.style.maskImage = ''
-  }
-
-  /** rAF 推遮盖位置：不依赖 @property 注册，老 Chromium 也照跑。 */
-  function animateWipe(el, ms, done) {
-    if (ms <= 0) {
-      applyWipeMask(el, 100)
-      done()
-      return
-    }
-    var start = typeof performance !== 'undefined' ? performance.now() : Date.now()
-    function step(now) {
-      var t = Math.min(1, (now - start) / ms)
-      applyWipeMask(el, t * 100)
-      if (t < 1) requestAnimationFrame(step)
-      else done()
-    }
-    requestAnimationFrame(step)
+  function resetWipeClip(wrap) {
+    if (!wrap) return
+    wrap.style.transition = 'none'
+    wrap.style.clipPath = ''
   }
 
   /** 失焦：模糊半径 + 一点点放大（视频被 blur 后边缘会露透明缝，放大盖住）。 */
@@ -589,10 +592,13 @@
         }
         incoming.setAttribute('data-instant', '')
         incoming.removeAttribute('data-hide')
-        incoming.setAttribute('data-top', '')
+        markTop(incoming)
         void incoming.offsetWidth
         incoming.removeAttribute('data-instant')
-        applyWipeMask(incoming, 0)
+        // 旧元素若还带着上一次的裁切，先清掉，否则它会被裁成一条缝。
+        resetWipeClip(outgoing.__dgtClip)
+        var inWrap = incoming.__dgtClip || null
+        wipeClip(inWrap, wipeMs)
         var wiped = incoming.play()
         if (wiped && typeof wiped.catch === 'function') {
           wiped.catch(function (error) {
@@ -601,11 +607,15 @@
         }
         adoptClip(decision, nextIndex, incoming)
         logDebug('擦除 · ' + wipeMs + 'ms')
-        animateWipe(incoming, wipeMs, function () {
-          clearWipeMask(incoming)
+        // 收尾：transitionend 为主，setTimeout 兜底（合成器没跑完也一定会收）。
+        var wipedDone = false
+        function finishWipe() {
+          if (wipedDone) return
+          wipedDone = true
+          resetWipeClip(inWrap)
           outgoing.setAttribute('data-instant', '')
           outgoing.setAttribute('data-hide', '')
-          outgoing.removeAttribute('data-top')
+          clearTop(outgoing)
           void outgoing.offsetWidth
           outgoing.removeAttribute('data-instant')
           try {
@@ -613,7 +623,16 @@
           } catch (error) {
             /* 忽略 */
           }
-        })
+        }
+        if (inWrap && inWrap.addEventListener) {
+          var onWipeEnd = function (event) {
+            if (event && event.propertyName && event.propertyName !== 'clip-path') return
+            inWrap.removeEventListener('transitionend', onWipeEnd)
+            finishWipe()
+          }
+          inWrap.addEventListener('transitionend', onWipeEnd)
+        }
+        setTimeout(finishWipe, wipeMs + 120)
         return
       }
 
@@ -626,7 +645,7 @@
         // 新元素先垫在下面、提前糊好，换上去的时候已经是最终形态
         incoming.setAttribute('data-instant', '')
         incoming.removeAttribute('data-hide')
-        incoming.removeAttribute('data-top')
+        clearTop(incoming)
         setBlur(incoming, BLUR_PX)
         try {
           incoming.currentTime = 0
@@ -649,11 +668,11 @@
           var stale = token !== boundaryToken
           adoptClip(decision, nextIndex, incoming)
           incoming.setAttribute('data-instant', '')
-          incoming.setAttribute('data-top', '')
+          markTop(incoming)
           incoming.removeAttribute('data-hide')
           outgoing.setAttribute('data-instant', '')
           outgoing.setAttribute('data-hide', '')
-          outgoing.removeAttribute('data-top')
+          clearTop(outgoing)
           void outgoing.offsetWidth
           incoming.removeAttribute('data-instant')
           outgoing.removeAttribute('data-instant')
@@ -677,10 +696,10 @@
       incoming.setAttribute('data-instant', '')
       if (firstRun) {
         incoming.setAttribute('data-hide', '')
-        incoming.setAttribute('data-top', '')
+        markTop(incoming)
       } else {
         incoming.removeAttribute('data-hide')
-        incoming.removeAttribute('data-top')
+        clearTop(incoming)
       }
       try {
         incoming.currentTime = 0
@@ -706,7 +725,7 @@
           if (token !== boundaryToken) return
           incoming.setAttribute('data-instant', '')
           incoming.removeAttribute('data-hide')
-          incoming.setAttribute('data-top', '')
+          markTop(incoming)
           void incoming.offsetWidth
           incoming.removeAttribute('data-instant')
         })
@@ -728,8 +747,8 @@
             /* 忽略 */
           }
           if (token !== boundaryToken) return
-          outgoing.removeAttribute('data-top')
-          incoming.setAttribute('data-top', '')
+          clearTop(outgoing)
+          markTop(incoming)
         }, fadeMs + 20)
       })
     }
@@ -1195,8 +1214,14 @@
       var el = makeVideoElement('dgt-video-' + (slot === 0 ? 'a' : 'b'))
       // 起播前先藏起来：有 src 之前元素会画成一块黑
       el.setAttribute('data-hide', '')
+      // 每个 video 外面套一层裁切容器：擦除动容器的 clip-path，
+      // 视频自己不加 mask、不加 transform，避免重建合成层带来的缩放跳变。
+      var wrap = document.createElement('div')
+      wrap.className = 'dgt-clip'
+      wrap.appendChild(el)
+      el.__dgtClip = wrap
       videos.push(el)
-      stage.appendChild(el)
+      stage.appendChild(wrap)
     }
     video = videos[0]
 
@@ -1757,7 +1782,7 @@
         } catch (error) {
           /* 暂停失败不影响卸载 */
         }
-        el.removeAttribute('data-top')
+        clearTop(el)
         el.removeAttribute('data-hide')
         el.removeAttribute('src')
         try {
