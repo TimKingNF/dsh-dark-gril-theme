@@ -1,6 +1,6 @@
 {
   "name": "dsh-dark-gril-theme",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "把 DSH 会话状态变成背景视频：五态轮播、dark/beautify 双模式、设置页开关与调试浮窗。",
   "keywords": [
     "dsh-plugin",
