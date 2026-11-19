@@ -78,6 +78,7 @@
   var boundaryToken = 0
   var boundaryWatch = 0
   var advancing = false
+  var stalledSince = 0
   /** advancing 的起始时刻：过渡路径被中途放弃时靠它自救，避免整台机器卡死。 */
   var advancingSince = 0
   /**
@@ -101,10 +102,9 @@
    */
   var DIP_IN_MS = 250
   var DIP_OUT_MS = 400
-  /** 擦除与失焦的默认时长；和 dip 一样可由配置覆盖。 */
-  var WIPE_MS = 600
+  /** 失焦的默认时长；和 dip 一样可由配置覆盖。 */
   var BLUR_MS = 600
-  /** 失焦过渡的峰值模糊半径（CSS px）与擦除边的羽化宽度（百分比）。 */
+  /** 失焦过渡的峰值模糊半径（CSS px）。 */
   var BLUR_PX = 16
   /** 配置里写死过的时长（走 CONFIG，缺省用上面的常量）。 */
   function dipTiming() {
@@ -130,14 +130,13 @@
   function boundaryLeadMs() {
     var t = dipTiming()
     if (transition === 'dip') return Math.max(BOUNDARY_LEAD_MS, t.inMs + t.outMs + 60)
-    if (transition === 'wipe') return Math.max(BOUNDARY_LEAD_MS, cfgMs('wipeMs', WIPE_MS) + 60)
     if (transition === 'blur') return Math.max(BOUNDARY_LEAD_MS, cfgMs('blurMs', BLUR_MS) + 60)
     return BOUNDARY_LEAD_MS
   }
   var TRANSITION_KEY = 'dgt-transition'
   /** 四种过渡，Ctrl+Alt+T 按这个顺序轮换。 */
-  var TRANSITIONS = ['dip', 'wipe', 'blur', 'cross']
-  var TRANSITION_LABELS = { dip: '过暗一闪', wipe: '柔边擦除', blur: '失焦', cross: '直接叠淡' }
+  var TRANSITIONS = ['dip', 'blur', 'cross']
+  var TRANSITION_LABELS = { dip: '过暗一闪', blur: '失焦', cross: '直接叠淡' }
   function normalizeTransition(value) {
     for (var i = 0; i < TRANSITIONS.length; i += 1) {
       if (TRANSITIONS[i] === value) return value
@@ -306,6 +305,45 @@
    * 页面卡一下就会落到 `ended` 之后（正是要避免的那个空档）。可见性为 hidden 时 rAF 停摆，
    * 那一刻的视觉也无所谓，`ended` 仍然兜底。
    */
+  /**
+   * 起播并兜住失败：seek 与加载撞车时 play() 会以 AbortError 拒绝，
+   * 元素就永久停在 paused——它既不会 ended，也不会被边界循环推进（循环只推在播的元素），
+   * 表现就是"视频播完这一屏就不动了"。这里失败后等 canplay 再试一次，
+   * 再不成就交给 watchBoundary 里的停顿看门狗。
+   */
+  function playSafe(el, label) {
+    if (!el) return
+    var promise
+    try {
+      promise = el.play()
+    } catch (error) {
+      warn('播放失败（' + label + '）：' + String(error))
+      return
+    }
+    if (!promise || typeof promise.then !== 'function') return
+    promise.catch(function (error) {
+      warn('素材未能自动播放（' + label + '）：' + String(error))
+      var retried = false
+      var retry = function () {
+        if (retried) return
+        retried = true
+        el.removeEventListener('canplay', retry)
+        try {
+          var again = el.play()
+          if (again && typeof again.catch === 'function') {
+            again.catch(function () {
+              stalledSince = Date.now()
+            })
+          }
+        } catch (error2) {
+          stalledSince = Date.now()
+        }
+      }
+      el.addEventListener('canplay', retry)
+      setTimeout(retry, 400)
+    })
+  }
+
   function watchBoundary() {
     if (boundaryWatch || !enabled) return
     boundaryWatch = requestAnimationFrame(function step() {
@@ -317,6 +355,16 @@
       }
       var el = video
       var total = el.duration
+      if (!advancing && el.paused && !el.ended && el.readyState >= 2) {
+        if (!stalledSince) stalledSince = Date.now()
+        else if (Date.now() - stalledSince > 1200) {
+          stalledSince = 0
+          logDebug('播放守护 · 元素停住了，重试 play')
+          playSafe(el, '看门狗')
+        }
+      } else {
+        stalledSince = 0
+      }
       if (!advancing && isFinite(total) && total > 0 && !el.paused) {
         var remainMs = (total - el.currentTime) * 1000
         if (remainMs <= boundaryLeadMs()) {
@@ -432,27 +480,18 @@
     startAttempts = 0
     hasStarted = true
     advancing = false
+    stalledSince = 0
     watchBoundary()
     logDebug('播 ' + decision.clip + ' · ' + decision.state + ' #' + decision.index + '/' + decision.pool.length)
     schedule()
   }
 
-  /**
-   * 叠放口径要落在裁切容器上，不能只落在 video 上：
-   * 容器一旦带上 clip-path 就会自己成为堆叠上下文，video 的 z-index 只在容器内部生效，
-   * 两个容器之间的上下关系就得由容器自己决定。data-top 只写在 video 上（唯一真相），
-   * 这里顺带把它镜像到容器。
-   */
   function markTop(el) {
-    if (!el) return
-    el.setAttribute('data-top', '')
-    if (el.__dgtClip) el.__dgtClip.setAttribute('data-top', '')
+    if (el) el.setAttribute('data-top', '')
   }
 
   function clearTop(el) {
-    if (!el) return
-    el.removeAttribute('data-top')
-    if (el.__dgtClip) el.__dgtClip.removeAttribute('data-top')
+    if (el) el.removeAttribute('data-top')
   }
 
   /** 瞬时摆上屏：不给过渡，"归位"本身就不会变成一次闪。 */
@@ -476,28 +515,6 @@
     } catch (error) {
       /* 暂停失败不影响换片 */
     }
-  }
-
-  /**
-   * 擦除：动的是 video 外面那层裁切容器的 clip-path，不碰 video 自己。
-   * 用 JS 逐帧推遮罩会踩两个坑：①给 <video> 加 mask 会让浏览器重建它的合成层，
-   * 重建那一帧按不同栅格尺度出图——肉眼就是闪一下放大再缩小；②rAF 一停（窗口被
-   * 判定不可见、掉帧），遮盖就冻结在半途，旧元素既不暂停也不隐藏，画面永久停在
-   * "左边新片、右边旧片"的截断状态。改交 CSS transition 后两件事都不再依赖 JS 帧。
-   */
-  function wipeClip(wrap, ms) {
-    if (!wrap) return
-    wrap.style.transition = 'none'
-    wrap.style.clipPath = 'inset(0 100% 0 0)'
-    void wrap.offsetWidth
-    wrap.style.transition = 'clip-path ' + ms + 'ms linear'
-    wrap.style.clipPath = 'inset(0 0 0 0)'
-  }
-
-  function resetWipeClip(wrap) {
-    if (!wrap) return
-    wrap.style.transition = 'none'
-    wrap.style.clipPath = ''
   }
 
   /** 失焦：模糊半径 + 一点点放大（视频被 blur 后边缘会露透明缝，放大盖住）。 */
@@ -529,7 +546,6 @@
     var firstRun = !hasStarted || !outgoing || outgoing === incoming
     // 首次起播没有旧元素可盖，硬切本来就是对的，不走 over-dark
     var useDip = !firstRun && transition === 'dip' && !!dipEl
-    var useWipe = !firstRun && transition === 'wipe'
     var useBlur = !firstRun && transition === 'blur'
 
     function commit() {
@@ -547,12 +563,7 @@
             /* 元数据没就绪时忽略 */
           }
           snapIn(incoming)
-          var hardPlay = incoming.play()
-          if (hardPlay && typeof hardPlay.catch === 'function') {
-            hardPlay.catch(function (error) {
-              warn('素材未能自动播放：' + String(error))
-            })
-          }
+          playSafe(incoming, '切黑')
           snapOut(outgoing)
           adoptClip(decision, nextIndex, incoming)
           return
@@ -568,71 +579,12 @@
             /* 元数据没就绪时忽略 */
           }
           snapIn(incoming)
-          var played = incoming.play()
-          if (played && typeof played.catch === 'function') {
-            played.catch(function (error) {
-              warn('素材未能自动播放：' + String(error))
-            })
-          }
+          playSafe(incoming, '压暗换片')
           snapOut(outgoing)
           adoptClip(decision, nextIndex, incoming)
           dipEl.style.transition = 'opacity ' + outMs + 'ms linear'
           dipEl.style.opacity = '0'
         }, inMs)
-        return
-      }
-
-      if (useWipe) {
-        // 擦除：新元素带羽化边从左侧扫入，同一像素永远只有一帧，不存在重影。
-        var wipeMs = cfgMs('wipeMs', WIPE_MS)
-        try {
-          incoming.currentTime = 0
-        } catch (error) {
-          /* 元数据没就绪时忽略 */
-        }
-        incoming.setAttribute('data-instant', '')
-        incoming.removeAttribute('data-hide')
-        markTop(incoming)
-        void incoming.offsetWidth
-        incoming.removeAttribute('data-instant')
-        // 旧元素若还带着上一次的裁切，先清掉，否则它会被裁成一条缝。
-        resetWipeClip(outgoing.__dgtClip)
-        var inWrap = incoming.__dgtClip || null
-        wipeClip(inWrap, wipeMs)
-        var wiped = incoming.play()
-        if (wiped && typeof wiped.catch === 'function') {
-          wiped.catch(function (error) {
-            warn('素材未能自动播放：' + String(error))
-          })
-        }
-        adoptClip(decision, nextIndex, incoming)
-        logDebug('擦除 · ' + wipeMs + 'ms')
-        // 收尾：transitionend 为主，setTimeout 兜底（合成器没跑完也一定会收）。
-        var wipedDone = false
-        function finishWipe() {
-          if (wipedDone) return
-          wipedDone = true
-          resetWipeClip(inWrap)
-          outgoing.setAttribute('data-instant', '')
-          outgoing.setAttribute('data-hide', '')
-          clearTop(outgoing)
-          void outgoing.offsetWidth
-          outgoing.removeAttribute('data-instant')
-          try {
-            outgoing.pause()
-          } catch (error) {
-            /* 忽略 */
-          }
-        }
-        if (inWrap && inWrap.addEventListener) {
-          var onWipeEnd = function (event) {
-            if (event && event.propertyName && event.propertyName !== 'clip-path') return
-            inWrap.removeEventListener('transitionend', onWipeEnd)
-            finishWipe()
-          }
-          inWrap.addEventListener('transitionend', onWipeEnd)
-        }
-        setTimeout(finishWipe, wipeMs + 120)
         return
       }
 
@@ -654,12 +606,7 @@
         }
         void incoming.offsetWidth
         incoming.removeAttribute('data-instant')
-        var blurred = incoming.play()
-        if (blurred && typeof blurred.catch === 'function') {
-          blurred.catch(function (error) {
-            warn('素材未能自动播放：' + String(error))
-          })
-        }
+        playSafe(incoming, '失焦')
         logDebug('失焦 · 糊 ' + rampMs + 'ms → 换 → 清 ' + settleMs + 'ms')
         outgoing.style.transition = 'filter ' + rampMs + 'ms linear, transform ' + rampMs + 'ms linear'
         setBlur(outgoing, BLUR_PX)
@@ -709,12 +656,7 @@
       void incoming.offsetWidth
       incoming.removeAttribute('data-instant')
 
-      var played = incoming.play()
-      if (played && typeof played.catch === 'function') {
-        played.catch(function (error) {
-          warn('素材未能自动播放：' + String(error))
-        })
-      }
+      playSafe(incoming, '叠淡')
 
       // 记账放在同步段：调试浮窗与状态机不该等首帧
       adoptClip(decision, nextIndex, incoming)
@@ -758,13 +700,25 @@
       return
     }
     incoming.dataset.clip = decision.clip
-    incoming.addEventListener('canplay', commit, { once: true })
+    // canplay 可能在我们挂上监听之前就发过（预载路径下尤其容易），
+    // 所以除了事件还留一条同步检查与一条超时兜底：三条路都只走一次。
+    var committed = false
+    function commitOnce() {
+      if (committed) return
+      committed = true
+      incoming.removeEventListener('canplay', commitOnce)
+      commit()
+    }
+    incoming.addEventListener('canplay', commitOnce)
+    setTimeout(commitOnce, 1200)
     incoming.src = videoUrlFor(decision.clip)
     try {
       incoming.load()
     } catch (error) {
       /* 忽略 */
     }
+    // 缓存命中时 load() 之后立刻就是可播状态，别再等一次事件
+    if (incoming.readyState >= 2) commitOnce()
   }
 
   /** approval 要硬切：等人时不该还在演上一段。 */
@@ -1152,7 +1106,6 @@
     var t = dipTiming()
     var timingLine
     if (transition === 'dip') timingLine = '盖 ' + t.inMs + ' / 揭 ' + t.outMs + 'ms'
-    else if (transition === 'wipe') timingLine = '扫 ' + cfgMs('wipeMs', WIPE_MS) + 'ms'
     else if (transition === 'blur') timingLine = '糊清 ' + cfgMs('blurMs', BLUR_MS) + 'ms'
     else timingLine = '叠淡 400ms'
     debugSet('boundary', timingLine + ' · 提前 ' + boundaryLeadMs() + 'ms')
@@ -1214,14 +1167,8 @@
       var el = makeVideoElement('dgt-video-' + (slot === 0 ? 'a' : 'b'))
       // 起播前先藏起来：有 src 之前元素会画成一块黑
       el.setAttribute('data-hide', '')
-      // 每个 video 外面套一层裁切容器：擦除动容器的 clip-path，
-      // 视频自己不加 mask、不加 transform，避免重建合成层带来的缩放跳变。
-      var wrap = document.createElement('div')
-      wrap.className = 'dgt-clip'
-      wrap.appendChild(el)
-      el.__dgtClip = wrap
       videos.push(el)
-      stage.appendChild(wrap)
+      stage.appendChild(el)
     }
     video = videos[0]
 
@@ -1440,16 +1387,16 @@
     return normalizeTransition(CONFIG.transition)
   }
 
-  /** Ctrl+Alt+T：按 dip → wipe → blur → cross 轮换。 */
+  /** Ctrl+Alt+T：按 dip → blur → cross 轮换。 */
   function toggleTransition() {
     var at = TRANSITIONS.indexOf(transition)
     var next = TRANSITIONS[(at + 1) % TRANSITIONS.length]
     return applyTransition(next, true)
   }
 
-  /** 擦除 / 失焦的时长（毫秒）。设置页滑块走这里。 */
+  /** 失焦的时长（毫秒）。设置页滑块走这里。 */
   function setTiming(key, value, persist) {
-    if (key !== 'wipeMs' && key !== 'blurMs') return null
+    if (key !== 'blurMs') return null
     if (typeof value !== 'number' || !isFinite(value)) return null
     var clamped = Math.max(0, Math.min(2000, Math.round(value)))
     CONFIG[key] = clamped

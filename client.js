@@ -39,12 +39,11 @@ window.__ModuleLoader__.load({
         kind: 'enum',
         options: [
           { value: 'dip', label: '压暗' },
-          { value: 'wipe', label: '擦除' },
           { value: 'blur', label: '失焦' },
           { value: 'cross', label: '叠淡' },
         ],
-        hint: '压暗 = 盖住→换元素→揭开（亮度会短暂降一下）；擦除 = 新画面带羽化边扫进来，同一像素永远只有一帧，亮度不变；'
-          + '失焦 = 先糊掉再换再清回来；叠淡 = 两段直接交叉（会看出两个影子）。快捷键 Ctrl + Alt + T 轮换，试完告诉我哪个当默认。',
+        hint: '压暗 = 盖住→换元素→揭开（亮度会短暂降一下）；失焦 = 先糊掉再换再清回来；'
+          + '叠淡 = 两段直接交叉（会看出两个影子）。快捷键 Ctrl + Alt + T 轮换，试完告诉我哪个当默认。',
       },
       {
         key: 'dipInMs',
@@ -65,16 +64,6 @@ window.__ModuleLoader__.load({
         step: 10,
         unit: 'ms',
         hint: '压暗之后再揭开的时间。比压暗长会更"呼吸"，太短会读成闪一下。两者之和决定每次换片占用多久（当前边界提前量会跟着自动放大）。',
-      },
-      {
-        key: 'wipeMs',
-        label: '擦除时长',
-        kind: 'number',
-        min: 0,
-        max: 1600,
-        step: 20,
-        unit: 'ms',
-        hint: '新画面从左侧扫进来的时间。太短像甩了一下，太长会拖。擦除没有压暗，所以它主要看"扫得顺不顺"。',
       },
       {
         key: 'blurMs',
@@ -125,7 +114,7 @@ window.__ModuleLoader__.load({
         if (key === 'transition' && typeof api.setTransition === 'function') {
           api.setTransition(value, false)
         }
-        if ((key === 'wipeMs' || key === 'blurMs') && typeof api.setTiming === 'function') {
+        if (key === 'blurMs' && typeof api.setTiming === 'function') {
           api.setTiming(key, Number(value), false)
         }
       } catch {

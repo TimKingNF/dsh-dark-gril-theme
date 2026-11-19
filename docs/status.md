@@ -1,6 +1,6 @@
 # 进度总结
 
-> 快照：2026-11-20 00:20（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`；已发 tag `v0.1.0`。规格修订 #21（四种换片过渡：压暗 / 柔边擦除 / 失焦 / 叠淡）
+> 快照：2026-11-20 01:35（Asia/Shanghai）。基线 tag `s1-baseline` = `d6511fb`；已发 tag `v0.1.0`。规格修订 #23（擦除下线，过渡回到三种：压暗 / 失焦 / 叠淡；修掉「播完不动」的 canplay 竞态）
 
 ## 一句话状态
 
@@ -307,7 +307,8 @@
 | `1302f9a` | 修订 #18：换片闪烁修复（提前量换片 + 合成层提示） |
 | `f5b87d0` | 修订 #20：dip 两段时长做成配置项（默认 250/400）+ 设置页三条控件 |
 | `fe34da8` | 修订 #21：四种换片过渡（压暗 / 柔边擦除 / 失焦 / 叠淡）+ `wipeMs`/`blurMs` + advancing 看门狗 |
-| 本次 | 修订 #22：擦除重做——遮罩从 `<video>` 移到外层裁切容器的 `clip-path`，推进由 rAF 改 CSS transition |
+| `5856d78` | 修订 #22：擦除重做——遮罩从 `<video>` 移到外层裁切容器的 `clip-path`，推进由 rAF 改 CSS transition |
+| 本次 | 修订 #23：擦除下线（硬边观感被否），修失焦「播完不动」的 `canplay` 竞态，补播放守护 |
 
 ## 修订 #22（2026-11-20 01:20）：擦除换实现
 
@@ -327,6 +328,32 @@
 实测（bsk uuel / tab 1794833290 / 可见窗口 1936×1166 / dev 注入 + 3099 素材源，40s rAF 连续采样 5427 帧）：4 次擦除分别 608 / 613 / 642 / 597ms，帧数 88 / 88 / 88 / 86，百分比单调 100 → 1；每次收尾后 `clip-path` 归 `none`、`maskImage` 全空、旧元素 `paused=true`、新元素继续播（末帧 t=1.21）。全程无卡死、无残留遮罩。`npm test` 52 pass / 0 fail。
 
 未验：肉眼看扫过时的边缘质感（羽化已去掉，现在是一条硬边）；不同素材对（姿态差异大的 `speaking-confirm`）下观感是否可接受，等用户体验后拍板。
+
+## 修订 #23（2026-11-20 01:35）：擦除下线 + 「播完不动」根因
+
+用户 m02845：「把擦除效果删了吧，一个大硬边滑动过去完全没有美感。失焦目前会出现视频播放完毕之后不动了，修复一下」。两条都落在这一版。
+
+### ① 擦除整条路径删除
+
+羽化版会重影、`clip-path` 版是硬边，两条都不成立，所以不是调参能救的。删掉的东西：`TRANSITIONS` 里的 `'wipe'`、`useWipe` 分支、`wipeClip`/`resetWipeClip`、`WIPE_MS` 常量、`wipeMs` 配置项与规则、`boundaryLeadMs()` 的 wipe 分支、`.dgt-clip` 裁切容器与两条 CSS（`markTop`/`clearTop` 回到只写 video 的 `data-top`）、设置页的「擦除」胶囊与时长滑块、`setTiming` 白名单到 `blurMs` 为止。现在过渡是三种：`dip`（默认）/ `blur` / `cross`。
+
+存量配置兼容：旧配置里的 `transition: "wipe"` 会被枚举校验拒掉、回落到默认 `dip`；`wipeMs` 静默丢弃。**host 侧要重启 DSH 才认新 schema**（curl `{"transition":"wipe"}` 在旧进程里仍是 400 `no-valid-key`，重启后变 400 是因为值不合法——两种情况都是 400，看返回文案区分）。
+
+### ② 「播完不动」的真正原因：`canplay` 在监听挂上之前就发过了
+
+`playClip()` 载入新素材的写法是「挂一次性 `canplay` 监听 → 设 `src` → `load()`」，靠事件回调去 `commit()`。问题在于**预载路径**：`warmNextClip()` 早就对那个元素 `load()` 过了，等边界轮到它时，`canplay` 可能已经发完——监听永远等不到第二次，`commit()` 永不执行，`advancing` 卡在 true，3s 看门狗把它复位后**又走同一条路**，于是每一段播完都停在原地。它有 `readyState >= 2` 的快路径，但预载刚起、还没到 2 的那几百毫秒正好卡在缝里。
+
+改法是把「等事件」换成「三条路只走一次」的 `commitOnce()`：`canplay` 事件 + `setTimeout(1200)` 兜底 + `load()` 之后同步检查 `readyState >= 2`，`committed` 标志保证幂等，`commit()` 自己的 `token !== boundaryToken` 仍拦迟到的那次。
+
+### ③ 顺手加的播放守护
+
+- `playSafe(el, label)` 取代四处裸 `incoming.play()`：`play()` 返回的 promise 被拒（seek 与加载撞车的 `AbortError` 最常见）时记一行 warn、等 `canplay` 再试一次、400ms 兜底；仍失败就把时间戳交给看门狗。
+- `watchBoundary()` 每帧加一条停顿判据：`!advancing && paused && !ended && readyState >= 2` 持续超过 1200ms 就 `playSafe(el, '看门狗')` 并写「播放守护 · 元素停住了，重试 play」。它覆盖的是「元素被暂停且不会 `ended`」这一类静默死亡——这种状态下边界循环不推、`ended` 也不来，以前就是永久静止。
+
+### 验证口径
+
+- `node --check runtime/bg.js`、`node --check client.js` 通过；`npm test` **52 pass / 0 fail**。
+- **真机/可见窗口的连续播放未验**：这台机器上 bsk 的 agent 窗口本轮一直是 `visibilityState=hidden`（`EnumWindows` 里也找不到该窗口），hidden 下 rAF 与媒体都停，测不出播放行为。请在你自己的窗口里刷新后看失焦换片是否连续。
 
 ## 下一步
 
