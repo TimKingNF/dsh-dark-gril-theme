@@ -124,15 +124,22 @@
    * 与 450ms 的较大值。
    */
   /** 读一个毫秒配置项，缺省回落到常量，clamp 到 0–2000。 */
-  function cfgMs(key, fallback) {
+  function cfgMs(key, fallback, min) {
     var v = typeof CONFIG[key] === 'number' && isFinite(CONFIG[key]) ? CONFIG[key] : fallback
-    return Math.max(0, Math.min(2000, Math.round(v)))
+    var lo = typeof min === 'number' ? min : 0
+    return Math.max(lo, Math.min(2000, Math.round(v)))
   }
+
+  /**
+   * 失焦时长下限。斜坡只占 45%，低于 240ms 时糊还没成形就换片了，观感与硬切无异。
+   * 宿主与设置页也按同一个数校验，三处不能各写一个。
+   */
+  var BLUR_MIN_MS = 240
 
   function boundaryLeadMs() {
     var t = dipTiming()
     if (transition === 'dip') return Math.max(BOUNDARY_LEAD_MS, t.inMs + t.outMs + 60)
-    if (transition === 'blur') return Math.max(BOUNDARY_LEAD_MS, cfgMs('blurMs', BLUR_MS) + 60)
+    if (transition === 'blur') return Math.max(BOUNDARY_LEAD_MS, cfgMs('blurMs', BLUR_MS, BLUR_MIN_MS) + 60)
     return BOUNDARY_LEAD_MS
   }
   var TRANSITION_KEY = 'dgt-transition'
@@ -367,6 +374,18 @@
       } else {
         stalledSince = 0
       }
+      /*
+       * 自愈：元素已经播完，却没有在换片。
+       *
+       * 这是两条既有分支都盖不到的格子——边界判定要求 `!paused`、停顿看门狗要求 `!ended`，
+       * 一旦 `advancing` 卡在 true（或被 token 挡掉）而元素走到结尾，整台机器就永久停摆：
+       * rAF 继续空转、ended 监听又被自己的 `advancing` 前提挡住。没有这个出口，只能刷新页面。
+       */
+      if (!advancing && el.ended) {
+        logDebug('边界自愈 · 已播完但没换片，补一次推进')
+        advance()
+        return
+      }
       if (!advancing && isFinite(total) && total > 0 && !el.paused) {
         var remainMs = (total - el.currentTime) * 1000
         if (remainMs <= boundaryLeadMs()) {
@@ -591,7 +610,7 @@
       if (useBlur) {
         // 失焦：旧元素先糊掉（它仍盖在上面），糊满那一刻换成同样糊着的新元素，再清回来。
         // 换的那一瞬间两帧都糊成一团，姿态差异读不出来。
-        var blurMs = cfgMs('blurMs', BLUR_MS)
+        var blurMs = cfgMs('blurMs', BLUR_MS, BLUR_MIN_MS)
         var rampMs = Math.max(60, Math.round(blurMs * 0.45))
         var settleMs = Math.max(60, blurMs - rampMs)
         // 新元素先垫在下面、提前糊好，换上去的时候已经是最终形态
@@ -1106,7 +1125,7 @@
     var t = dipTiming()
     var timingLine
     if (transition === 'dip') timingLine = '盖 ' + t.inMs + ' / 揭 ' + t.outMs + 'ms'
-    else if (transition === 'blur') timingLine = '糊清 ' + cfgMs('blurMs', BLUR_MS) + 'ms'
+    else if (transition === 'blur') timingLine = '糊清 ' + cfgMs('blurMs', BLUR_MS, BLUR_MIN_MS) + 'ms'
     else timingLine = '叠淡 400ms'
     debugSet('boundary', timingLine + ' · 提前 ' + boundaryLeadMs() + 'ms')
 

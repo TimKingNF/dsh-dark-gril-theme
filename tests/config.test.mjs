@@ -21,7 +21,7 @@ test('默认值里两个开关都是关', () => {
 })
 
 test('dip 时长与过渡方式都有默认值', () => {
-  assert.equal(DEFAULTS.transition, 'cross')
+  assert.equal(DEFAULTS.transition, 'dip')
   assert.equal(DEFAULTS.glow, 0)
   assert.equal(DEFAULTS.dipInMs, 250)
   assert.equal(DEFAULTS.dipOutMs, 400)
@@ -38,13 +38,28 @@ test('dip 时长超界或非数字被拒，过渡方式只认两个值', () => {
   assert.deepEqual(sanitizePatch({ dipInMs: '400' }), {})
 })
 
-test('四种过渡都收，第五种拒收', () => {
+test('三种过渡都收，第四种拒收', () => {
   for (const kind of ['dip', 'blur', 'cross']) {
     assert.deepEqual(sanitizePatch({ transition: kind }), { transition: kind })
   }
   assert.deepEqual(sanitizePatch({ transition: 'fade' }), {})
   assert.deepEqual(sanitizePatch({ blurMs: 500 }), { blurMs: 500 })
   assert.deepEqual(sanitizePatch({ blurMs: 2001 }), {})
+})
+
+test('失焦时长有 240ms 下限：低于它的值被拒，退化回默认 600', () => {
+  // 斜坡只占 45%，240ms 以下糊还没成形就换片，观感等同硬切（用户实测拉到头就是这个结果）。
+  assert.deepEqual(sanitizePatch({ blurMs: 100 }), {})
+  assert.deepEqual(sanitizePatch({ blurMs: 239 }), {})
+  assert.deepEqual(sanitizePatch({ blurMs: 240 }), { blurMs: 240 })
+  // 已经写在磁盘上的旧值也走同一条校验：100ms 被丢弃，读回来是默认 600
+  const h = home()
+  try {
+    writeFileSync(configPath(h.dir), JSON.stringify({ blurMs: 100 }), 'utf8')
+    assert.equal(readConfig(h.dir).blurMs, DEFAULTS.blurMs)
+  } finally {
+    h.dispose()
+  }
 })
 
 test('只收白名单里的合法键', () => {

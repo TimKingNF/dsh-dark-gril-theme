@@ -69,7 +69,7 @@ window.__ModuleLoader__.load({
         key: 'blurMs',
         label: '失焦时长',
         kind: 'number',
-        min: 0,
+        min: 240,
         max: 1600,
         step: 20,
         unit: 'ms',
